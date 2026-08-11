@@ -1,2 +1,6 @@
 streamlit>=1.30
 pandas>=1.5
+# Only needed for the optional save/resume store (student_store.py).
+# Harmless if you don't configure storage; the app runs without it.
+dropbox>=11.0
+cryptography>=3.4

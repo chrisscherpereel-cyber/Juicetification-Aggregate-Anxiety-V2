@@ -540,7 +540,12 @@ def restore_progress():
     SS["_restored"] = True
     if not (store.enabled() and SID):
         return
-    saved = store.load(GAME, SID)
+    try:
+        saved = store.load(GAME, SID)
+    except Exception:
+        # A store hiccup (missing dependency, network, credentials) must never take
+        # down the lab — just proceed with a fresh scenario.
+        return
     if not saved:
         return
     for k, v in saved.items():
