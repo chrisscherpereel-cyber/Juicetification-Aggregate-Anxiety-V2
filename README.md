@@ -123,11 +123,34 @@ encode_cfg({"regular_labor_cost": 4000,
 # → paste the string after ?cfg=  in the app URL
 ```
 
+## Save & resume (optional)
+
+The app can persist each student's progress and give every student a **stable,
+unique scenario** they can leave and return to. This is handled by
+[`student_store.py`](student_store.py) and is a **safe no-op until configured** —
+with no secrets set, the app runs exactly as described above.
+
+When configured, the flow is:
+
+- The student opens a link with `?game=<code>` and is asked once for a **student ID**
+  (added to the URL as `?sid=`). The scenario seed is derived deterministically from
+  that ID, so the same student always gets the same numbers.
+- Progress (worksheets, completed stages, plan summaries, predictions, recommendation,
+  reflections, design-challenge best, and challenge metrics) is **autosaved** after
+  each step and **restored** on return — a refresh with the same `?sid=` resumes where
+  they left off.
+- On the report screen, the completion code (and score) is recorded to the store.
+
+Configuration uses the same secrets as the Director's storage layer
+(`DB_ENCRYPTION_KEY` plus Dropbox credentials); see the docstring in
+`student_store.py`. Set them via environment variables or Streamlit secrets.
+
 ## Files
 
 - `app.py` — the entire simulation (single file, no external data).
 - `manifest.py` — the configurable parameter schema (used by the Director).
 - `juice_director.py` — shared Director config loader (identical across apps).
+- `student_store.py` — optional per-student save/resume store (safe no-op if unset).
 - `requirements.txt` — Python dependencies.
 - `Juicetification_Aggregate_Anxiety_Instructions.pdf` — one‑page student handout.
 - `docs/` — supplementary material: the academic write‑up (`.docx`) and figures.

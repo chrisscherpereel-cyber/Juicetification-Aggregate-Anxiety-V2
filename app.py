@@ -12,6 +12,7 @@ Run:  streamlit run app.py
 
 import math
 import re
+import json
 import random
 import datetime as dt
 
@@ -20,6 +21,7 @@ import streamlit as st
 
 from juice_director import resolve_config, serve_manifest_if_requested
 from manifest import MANIFEST
+import student_store as store
 
 # The Director discovers this app's parameter schema via ?manifest=1 (emits JSON
 # and stops). Otherwise resolve_config returns instructor overrides (?cfg=/?game=)
@@ -385,10 +387,36 @@ st.set_page_config(page_title="Juicetification: Aggregate Anxiety", page_icon="�
                    layout="wide")
 
 SS = st.session_state
-# Seed the per-student scenario from the Director when it supplied one (?seed=/game),
-# otherwise draw a fresh random scenario for this session.
-SS.setdefault("rand_seed", CTX["seed"] if CTX["seed"] is not None
-              else random.randint(1, 10 ** 6))
+
+# ---- per-student identity (from the URL) & progress store --------------------- #
+# All student_store functions are safe no-ops when storage is unconfigured, so the
+# app behaves exactly as before unless the instructor wires up the secrets.
+GAME = store.game_code()          # ?game=<code>  (None if absent)
+SID = store.get_student_id()      # ?sid=<id>     (None if absent)
+
+# When storage IS configured, require a student ID before the lab proceeds, so every
+# student maps to a stable, resumable record. Disabled → skip the gate entirely.
+if store.enabled() and not SID:
+    st.title("Juicetification: Aggregate Anxiety")
+    st.subheader("Enter your student ID to begin")
+    _entered = st.text_input("Student ID", key="_gate_sid",
+                             help="Your progress is saved under this ID so you can "
+                                  "leave and resume later.")
+    if st.button("Start", type="primary") and _entered.strip():
+        store.set_student_id(_entered)   # puts ?sid= in the URL
+        st.rerun()
+    st.stop()
+
+# Seed the scenario deterministically from the student ID, so the SAME student always
+# gets the SAME unique scenario (and can resume it). If no student ID, fall back to a
+# Director-provided seed, else a fresh random one — exactly as before.
+if "rand_seed" not in SS:
+    if SID:
+        SS["rand_seed"] = store.derive_seed(GAME, SID, lo=1, hi=10 ** 6)
+    elif CTX["seed"] is not None:
+        SS["rand_seed"] = CTX["seed"]
+    else:
+        SS["rand_seed"] = random.randint(1, 10 ** 6)
 SS.setdefault("student_name", "")
 SS.setdefault("section", "")
 SS.setdefault("recommendation", "")
@@ -428,6 +456,120 @@ def persist_radio(label, options, store_key, **kw):
     st.radio(label, options, key=wk, **kw)
     SS[store_key] = SS[wk]
     return SS[store_key]
+
+
+# --------------------------------------------------------------------------- #
+# 2b. PROGRESS PERSISTENCE (save / resume via student_store)
+# --------------------------------------------------------------------------- #
+# Session-state keys that make up a student's saved progress. Everything else
+# (widget states, RNG helpers, figures) is transient and rebuilt each run.
+PROGRESS_KEYS = [
+    # scenario identity & worksheet versioning
+    "rand_seed", "chase_ver", "level_ver",
+    # student identity fields
+    "student_name", "section",
+    # stage-completion gates
+    "cols_done", "stage4_done", "cap_done",
+    # plan settings
+    "chase_policy", "chase_whole", "chase_maintain",
+    "level_whole", "level_maintain", "level_prod", "level_workers",
+    # the worksheets the student builds (DataFrames)
+    "chase_ws", "level_ws",
+    # computed plan summaries (dicts of numbers)
+    "chase_summary", "level_summary",
+    # predict-then-verify answers
+    "chase_pred", "level_pred", "cmp_pred",
+    # challenge metrics
+    "chase_tries", "chase_stuck", "chase_completed",
+    "level_tries", "level_stuck", "level_completed",
+    # recommendation / choice / reflection
+    "recommendation", "chosen_plan",
+    "refl_stability", "refl_responsive", "refl_surprise",
+    # design challenge
+    "design_best",
+]
+# Design-challenge quarter inputs (dc_q0..dc_qN) are captured by prefix.
+_PROGRESS_PREFIXES = ("dc_q",)
+
+
+def _json_safe(v):
+    """Make any value JSON-serializable: numpy → python, sets → sorted lists,
+    DataFrames → {'__df__': columns dict}, NaN/inf → None."""
+    if v is None or isinstance(v, (str, bool)):
+        return v
+    if isinstance(v, dict):
+        return {str(k): _json_safe(x) for k, x in v.items()}
+    if isinstance(v, pd.DataFrame):
+        return {"__df__": _json_safe(v.to_dict("list"))}
+    if isinstance(v, set):
+        return sorted(_json_safe(x) for x in v)
+    if isinstance(v, (list, tuple)):
+        return [_json_safe(x) for x in v]
+    if hasattr(v, "tolist"):            # numpy arrays & scalars, pandas Series
+        try:
+            return _json_safe(v.tolist())
+        except Exception:
+            pass
+    if isinstance(v, float):
+        return None if (v != v or v in (float("inf"), float("-inf"))) else v
+    if isinstance(v, int):
+        return v
+    return str(v)
+
+
+def _in_progress_keys(k):
+    return k in PROGRESS_KEYS or (isinstance(k, str)
+                                  and k.startswith(_PROGRESS_PREFIXES))
+
+
+def progress_snapshot():
+    """A plain-JSON snapshot of just the progress keys currently in session_state."""
+    snap = {}
+    keys = list(PROGRESS_KEYS) + [k for k in list(SS.keys()) if _in_progress_keys(k)]
+    for k in keys:
+        if k in SS and k not in snap:
+            snap[k] = _json_safe(SS[k])
+    return snap
+
+
+def restore_progress():
+    """Once per session, copy a saved record back into session_state (progress keys
+    only). No-op when storage is disabled or nothing is saved."""
+    if SS.get("_restored"):
+        return
+    SS["_restored"] = True
+    if not (store.enabled() and SID):
+        return
+    saved = store.load(GAME, SID)
+    if not saved:
+        return
+    for k, v in saved.items():
+        if not _in_progress_keys(k):
+            continue
+        if isinstance(v, dict) and "__df__" in v:
+            SS[k] = pd.DataFrame(v["__df__"])
+        else:
+            SS[k] = v
+
+
+def autosave_progress():
+    """Persist progress when it has changed since the last save (dedup by content).
+    No-op when storage is disabled. Safe to call at the end of every run."""
+    if not (store.enabled() and SID):
+        return
+    try:
+        snap = progress_snapshot()
+        blob = json.dumps(snap, separators=(",", ":"), sort_keys=True)
+        if blob != SS.get("_last_saved_blob"):
+            if store.save(GAME, SID, snap):
+                SS["_last_saved_blob"] = blob
+    except Exception:
+        pass
+
+
+# Restore a returning student's progress before the scenario is built, so a restored
+# rand_seed drives the same forecast they left off on.
+restore_progress()
 
 # Give each student a unique, easy-to-calculate scenario (stable within a session).
 # An instructor-fixed 12-month demand (forecast_demand) wins over the seeded generator.
@@ -1087,6 +1229,8 @@ STAGES = [
 
 st.sidebar.title("🧃 Juicetification")
 st.sidebar.caption("Aggregate Anxiety")
+if store.enabled() and SID:
+    st.sidebar.caption(f"Signed in as **{SID}** · progress saved automatically")
 stage = st.sidebar.radio("Simulation stage", STAGES, index=0,
                          label_visibility="collapsed")
 
@@ -2339,6 +2483,13 @@ elif stage == STAGES[11]:
             seed = SS.rand_seed
             sub_code = f"AGG-JUST-{seed % 100000:05d}-{tag}"
             now = dt.datetime.now().strftime("%Y-%m-%d %H:%M")
+
+            # Record the completion to the student's store (no-op unless configured).
+            # Score = chosen plan's total cost (or the cheaper of the two if undecided).
+            _score = {"Chase": cs["Total cost"], "Level": ls["Total cost"]}.get(
+                pick, min(cs["Total cost"], ls["Total cost"]))
+            store.record_completion(GAME, SID, completion_code=sub_code,
+                                    score=_json_safe(_score))
             report = f"""JUICETIFICATION: AGGREGATE ANXIETY — PERFORMANCE REPORT
 ====================================================
 Student:        {SS.student_name or '(not entered)'}
@@ -2388,3 +2539,11 @@ CHALLENGE METRICS
             st.download_button("Download report (.txt)", report,
                                file_name=f"{sub_code}.txt")
             st.success(f"Submission code: **{sub_code}**")
+
+
+# --------------------------------------------------------------------------- #
+# Autosave: runs at the end of every script pass, so any completed step, submitted
+# answer, advanced round, or finished rush is persisted. Writes only when the
+# snapshot changed, and is a no-op unless storage is configured and a student is set.
+# --------------------------------------------------------------------------- #
+autosave_progress()
