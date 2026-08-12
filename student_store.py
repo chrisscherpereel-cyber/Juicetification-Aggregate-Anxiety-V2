@@ -36,6 +36,7 @@ def _cfg(name, default=None):
 
 DB_ENCRYPTION_KEY = _cfg("DB_ENCRYPTION_KEY")
 PROGRESS_ROOT = _cfg("PROGRESS_ROOT", "/JuicetificationProgress")
+GAMES_ROOT = _cfg("GAMES_ROOT", "/JuicetificationGames")
 _REFRESH = _cfg("DROPBOX_REFRESH_TOKEN")
 _APP_KEY = _cfg("DROPBOX_APP_KEY")
 _APP_SECRET = _cfg("DROPBOX_APP_SECRET")
@@ -173,6 +174,30 @@ def record_completion(game, sid, completion_code=None, score=None, extra=None):
     _upload(_completion_path(game, sid),
             _fernet().encrypt(json.dumps(rec).encode()))
     return True
+
+
+def _game_config_path(code):
+    return f"{GAMES_ROOT}/{code}.json"
+
+
+def save_game_config(code, payload):
+    if not ENABLED or not code:
+        return False
+    _upload(_game_config_path(code),
+            _fernet().encrypt(json.dumps(payload).encode()))
+    return True
+
+
+def load_game_config(code):
+    if not ENABLED or not code:
+        return None
+    raw = _download(_game_config_path(code))
+    if raw is None:
+        return None
+    try:
+        return json.loads(_fernet().decrypt(raw).decode())
+    except Exception:
+        return None
 
 
 def list_completions(game):
