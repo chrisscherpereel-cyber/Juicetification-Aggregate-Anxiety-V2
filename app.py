@@ -18,6 +18,7 @@ import datetime as dt
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
 from juice_director import resolve_config, serve_manifest_if_requested
 from manifest import MANIFEST
@@ -363,23 +364,6 @@ def strategy_summaries_for_demand(demand, settings):
         FORECAST, TOTAL_DEMAND = save_f, save_t
 
 
-def compare_columns(student_df, truth_df, mapping, tol=0.5):
-    """Return {student_col: [months that are wrong]} without exposing values."""
-    report = {}
-    for scol, tcol in mapping.items():
-        wrong = []
-        for i in range(len(MONTHS)):
-            try:
-                sv = float(student_df[scol].iloc[i])
-            except (TypeError, ValueError):
-                sv = None
-            tv = float(truth_df[tcol].iloc[i])
-            if sv is None or abs(sv - tv) > tol:
-                wrong.append(MONTHS[i])
-        report[scol] = wrong
-    return report
-
-
 # --------------------------------------------------------------------------- #
 # 3. STREAMLIT UI
 # --------------------------------------------------------------------------- #
@@ -458,6 +442,94 @@ def persist_radio(label, options, store_key, **kw):
     return SS[store_key]
 
 
+def persist_radio_optional(label, options, store_key, **kw):
+    """A radio that starts with NOTHING selected (index=None) and whose choice — or
+    the fact that nothing was chosen yet — survives leaving the page."""
+    wk = "_w_" + store_key
+    if wk not in SS:
+        prev = SS.get(store_key)
+        SS[wk] = prev if prev in options else None
+    st.radio(label, options, index=None, key=wk, **kw)
+    SS[store_key] = SS[wk]
+    return SS[store_key]
+
+
+def persist_multiselect(label, options, store_key, **kw):
+    """A multiselect whose selections survive leaving the page."""
+    wk = "_w_" + store_key
+    if wk not in SS:
+        prev = SS.get(store_key, [])
+        SS[wk] = [o for o in prev if o in options]
+    st.multiselect(label, options, key=wk, **kw)
+    SS[store_key] = list(SS[wk])
+    return SS[store_key]
+
+
+def persist_number(label, store_key, default=0, **kw):
+    """A number_input whose value survives leaving the page."""
+    wk = "_w_" + store_key
+    if wk not in SS:
+        SS[wk] = SS.get(store_key, default)
+    val = st.number_input(label, key=wk, **kw)
+    SS[store_key] = val
+    return val
+
+
+def persist_checkbox(label, store_key, default=False, **kw):
+    """A checkbox whose value survives leaving the page."""
+    wk = "_w_" + store_key
+    if wk not in SS:
+        SS[wk] = bool(SS.get(store_key, default))
+    val = st.checkbox(label, key=wk, **kw)
+    SS[store_key] = val
+    return val
+
+
+def persist_text_input(label, store_key, **kw):
+    """A single-line text_input whose content survives leaving the page."""
+    wk = "_w_" + store_key
+    if wk not in SS:
+        SS[wk] = SS.get(store_key, "")
+    st.text_input(label, key=wk, **kw)
+    SS[store_key] = SS[wk]
+    return SS[store_key]
+
+
+def scroll_to_top(token):
+    """Scroll the main view to the very top exactly once per navigation.
+
+    The navigation `token` is embedded in the injected HTML, so every navigation
+    produces a UNIQUE payload. Streamlit therefore remounts the component iframe and
+    re-executes the script — a single scroll-to-top. On ordinary reruns (same stage,
+    e.g. typing in the grid) the token is unchanged, the payload is identical, the
+    iframe is reused, and the scroll does NOT fire, so it never yanks the page while
+    the user is working."""
+    components.html(
+        f"""
+        <div id="scrolltop-{token}" style="display:none">{token}</div>
+        <script>
+          (function() {{
+            const NAV = "{token}";               // changes only on navigation
+            try {{
+              const doc = window.parent.document;
+              const sels = ['section.main',
+                            'div[data-testid="stAppViewContainer"]',
+                            'div[data-testid="stMain"]',
+                            'div[data-testid="stMainBlockContainer"]',
+                            '.main', '.block-container'];
+              for (const s of sels) {{
+                const el = doc.querySelector(s);
+                if (el) {{ el.scrollTop = 0; }}
+              }}
+              window.parent.scrollTo(0, 0);
+            }} catch (e) {{ /* cross-origin/unavailable: ignore */ }}
+          }})();
+        </script>
+        """,
+        height=0,
+    )
+
+
 # --------------------------------------------------------------------------- #
 # 2b. PROGRESS PERSISTENCE (save / resume via student_store)
 # --------------------------------------------------------------------------- #
@@ -470,9 +542,10 @@ PROGRESS_KEYS = [
     "student_name", "section",
     # stage-completion gates
     "cols_done", "stage4_done", "cap_done",
-    # plan settings
-    "chase_policy", "chase_whole", "chase_maintain",
-    "level_whole", "level_maintain", "level_prod", "level_workers",
+    # plan settings (bools/values plus the widget labels that mirror them)
+    "chase_policy", "chase_whole", "chase_maintain", "chase_wmodel",
+    "level_policy", "level_whole", "level_maintain", "level_wmodel",
+    "level_prod", "level_workers",
     # the worksheets the student builds (DataFrames)
     "chase_ws", "level_ws",
     # computed plan summaries (dicts of numbers)
@@ -688,24 +761,6 @@ def level_explanation(whole=True, maintain=False):
         "6. **Total Monthly Cost** = Labor + Hiring + Layoff + Holding + Backorder.")
 
 
-def evalnum(s):
-    """Turn a cell entry into a number. Accepts plain numbers OR arithmetic
-    formulas like '15*3200', '=2000+15000-8000'. Returns None if blank/invalid."""
-    if s is None:
-        return None
-    t = str(s).strip().replace(",", "").replace("$", "")
-    if t == "":
-        return None
-    if t.startswith("="):
-        t = t[1:]
-    if not re.fullmatch(r"[0-9+\-*/(). ]+", t):
-        return None
-    try:
-        return float(eval(t, {"__builtins__": {}}, {}))
-    except Exception:
-        return None
-
-
 def _fmt(v):
     return str(int(v)) if float(v).is_integer() else f"{v:g}"
 
@@ -810,25 +865,6 @@ def grade_from_values(df, values, truth, cols, tol=0.5):
     return status, display
 
 
-def apply_state(df, state):
-    """Return a copy of df with the data_editor's pending edits applied
-    (positionally, respecting the 1..12 row index). Does NOT mutate df."""
-    d = df.copy()
-    if isinstance(state, dict):
-        for r, changes in state.get("edited_rows", {}).items():
-            for c, v in changes.items():
-                d.iat[int(r), d.columns.get_loc(c)] = v
-    return d
-
-
-def current_worksheet(store_key, editor_key):
-    """The worksheet as the student currently sees it = stored baseline + the
-    editor's live edits. We reconstruct edits instead of writing them back to the
-    baseline, so the grid's data prop never changes during typing and the cell
-    selection (cursor) is preserved after Enter/Tab/arrow — like Excel."""
-    return apply_state(SS[store_key], st.session_state.get(editor_key))
-
-
 def _window_edits(state, offset):
     """Editor edits (positions 0..2 within a 3-row window) mapped to full-row
     indices via the window's offset."""
@@ -904,27 +940,6 @@ text-align:center;font-family:sans-serif;min-width:96px}}
 <span class="jmchip" style="background:#fff3cd;color:#7a5b00">
 <div class="jmlab">Blank</div><div class="jmval">{n_blank}</div></span>
 </div>"""
-
-
-def status_metrics_vertical_html(n_ok, n_wrong, n_blank, total):
-    """Stacked chips for a narrow column to the LEFT of the worksheet.
-    The 'Wrong' chip flashes while any cell is wrong."""
-    flash = "vflash" if n_wrong > 0 else ""
-    return f"""
-<style>
-@keyframes vflashpulse {{0%,100%{{background:#ffd6d6;color:#a30000}}
-50%{{background:#ff3b3b;color:#fff}}}}
-.vchip{{display:block;padding:10px;border-radius:8px;margin:0 0 8px 0;
-text-align:center;font-family:sans-serif}}
-.vflash{{animation:vflashpulse 0.8s infinite}}
-.vlab{{font-size:12px;opacity:.85}} .vval{{font-size:24px;font-weight:800;line-height:1}}
-</style>
-<div class="vchip" style="background:#e6f4ea;color:#0a5c2b">
-<div class="vlab">Correct</div><div class="vval">{n_ok}/{total}</div></div>
-<div class="vchip {flash}" style="background:#ffd6d6;color:#a30000">
-<div class="vlab">Wrong</div><div class="vval">{n_wrong}</div></div>
-<div class="vchip" style="background:#fff3cd;color:#7a5b00">
-<div class="vlab">Blank</div><div class="vval">{n_blank}</div></div>"""
 
 
 # Per-column rule + the most likely mistake, phrased so the "why" is explained
@@ -1198,9 +1213,9 @@ def worker_model_control(prefix):
     p = PARAMS
     cap_day = p["bottles_per_hour"] * p["hours_per_day"]
     cap_month = cap_day * p["working_days"]
-    model = st.radio("Worker model",
-                     ["Whole workers (round up)", "Partial workers (hours/day)"],
-                     horizontal=True, key=f"{prefix}_model")
+    model = persist_radio("Worker model",
+                          ["Whole workers (round up)", "Partial workers (hours/day)"],
+                          f"{prefix}_wmodel", horizontal=True)
     whole = model.startswith("Whole")
     if SS.get("cap_done"):
         st.caption(f"Capacity (from your Capacity challenge ✔): **{cap_day}** "
@@ -1245,7 +1260,9 @@ if SS.pop("_new_scenario", False):
         SS.pop(k, None)
 
 # On stage change: bake any pending grid edits into the stored worksheet (so they
-# survive navigation) and reset the reveal checkboxes.
+# survive navigation), reset the reveal checkboxes, and bump the navigation token so
+# the destination screen scrolls to the top exactly once.
+SS.setdefault("_nav_token", 0)
 if SS.get("prev_stage") != stage:
     for wk, prefix in (("chase_ws", "chase"), ("level_ws", "level")):
         vk, pw = f"{prefix}_ver", f"{prefix}_prevwin"
@@ -1255,6 +1272,11 @@ if SS.get("prev_stage") != stage:
     for k in ("chase_reveal", "level_reveal"):
         SS.pop(k, None)
     SS["prev_stage"] = stage
+    SS["_nav_token"] += 1
+
+# Scroll the destination to the top once per navigation (token embedded in the HTML
+# forces a fresh iframe + a single scroll; unchanged token on reruns is a no-op).
+scroll_to_top(SS["_nav_token"])
 
 SS.student_name = st.sidebar.text_input("Student name", SS.student_name)
 SS.section = st.sidebar.text_input("Course section", SS.section)
@@ -1269,9 +1291,9 @@ with st.sidebar.expander("❓ Help & how it works", expanded=False):
         "**The stages**\n"
         "1–4 warm you up: read the brief, spot the trade-off, pick the data and "
         "columns, and choose the right formulas.\n\n"
-        "5 drills the two core calculations on quick scenarios.\n\n"
-        "6 & 7 are where you **build the plan** cell by cell (chase, then level).\n\n"
-        "8 compares them; 9 is your report.\n\n"
+        "5 drills the two core calculations; 6 works out capacity.\n\n"
+        "7 & 8 are where you **build the plan** cell by cell (chase, then level).\n\n"
+        "9 compares them, 10 is an optional design challenge, and 11 is your report.\n\n"
         "**Entering values**\n"
         "Type a number, or a formula starting with `=`. Formulas can use other "
         "cells (`=H5`), math (`=8*3200`), and brief-data names (`=D5*LABOR`).\n\n"
@@ -1330,24 +1352,24 @@ if stage == STAGES[0]:
 elif stage == STAGES[1]:
     st.title("Stage 1 · Understand the Planning Problem")
     st.write("Frame the trade-off before calculating. No penalty here.")
-    q1 = st.multiselect("1. Which months have the **highest** demand?", MONTHS)
-    q2 = st.multiselect("2. Which months have the **lowest** demand?", MONTHS)
-    q3 = st.radio("3. If the company produces the *same* amount every month:",
-                  shuffled("s1q3", [
-                      "Inventory builds in slow months and shortages appear at the peak",
-                      "Costs are always minimized",
-                      "The workforce must change every month"]), index=None)
-    q4 = st.radio("4. If the workforce changes every month to match demand:",
-                  shuffled("s1q4", [
-                      "Hiring and layoff costs rise, but inventory stays low",
-                      "Inventory holding cost becomes the biggest cost",
-                      "Nothing changes"]), index=None)
-    q5 = st.multiselect("5. Which costs tend to **rise under a chase strategy**?",
-                        shuffled("s1q5", ["Hiring cost", "Layoff cost", "Holding cost",
-                                          "Backorder cost", "Regular labor cost"]))
-    q6 = st.multiselect("6. Which costs tend to **rise under a level strategy**?",
-                        shuffled("s1q6", ["Hiring cost", "Layoff cost", "Holding cost",
-                                          "Backorder cost", "Regular labor cost"]))
+    q1 = persist_multiselect("1. Which months have the **highest** demand?", MONTHS, "s1q1")
+    q2 = persist_multiselect("2. Which months have the **lowest** demand?", MONTHS, "s1q2")
+    q3 = persist_radio_optional("3. If the company produces the *same* amount every month:",
+                                shuffled("s1q3", [
+                                    "Inventory builds in slow months and shortages appear at the peak",
+                                    "Costs are always minimized",
+                                    "The workforce must change every month"]), "s1q3_ans")
+    q4 = persist_radio_optional("4. If the workforce changes every month to match demand:",
+                                shuffled("s1q4", [
+                                    "Hiring and layoff costs rise, but inventory stays low",
+                                    "Inventory holding cost becomes the biggest cost",
+                                    "Nothing changes"]), "s1q4_ans")
+    q5 = persist_multiselect("5. Which costs tend to **rise under a chase strategy**?",
+                             shuffled("s1q5", ["Hiring cost", "Layoff cost", "Holding cost",
+                                               "Backorder cost", "Regular labor cost"]), "s1q5_ans")
+    q6 = persist_multiselect("6. Which costs tend to **rise under a level strategy**?",
+                             shuffled("s1q6", ["Hiring cost", "Layoff cost", "Holding cost",
+                                               "Backorder cost", "Regular labor cost"]), "s1q6_ans")
     with st.expander("💡 Help — how to think about this (no answers)"):
         st.write("- A **chase** plan moves *capacity* up and down. What has to change "
                  "to move capacity? What does changing it cost?")
@@ -1386,8 +1408,8 @@ elif stage == STAGES[2]:
                    "Annual interest rate", "Machine setup time", "Marketing budget",
                    "Warehouse square footage", "Employee turnover rate",
                    "Competitor pricing"}
-    picks = st.multiselect("Inputs needed to build the plan",
-                           shuffled("s2opts", required | distractors))
+    picks = persist_multiselect("Inputs needed to build the plan",
+                                shuffled("s2opts", required | distractors), "s2picks")
     with st.expander("💡 Help (no answers)"):
         st.write("For each option ask: *does a number in my worksheet multiply or "
                  "depend on it?* If nothing in the plan uses it, it's a distractor. "
@@ -1422,8 +1444,8 @@ elif stage == STAGES[3]:
              "Employee Satisfaction Score", "Warehouse Square Footage",
              "Marketing Spend", "Machine Color", "Prior-Year Tax Rate",
              "Delivery Route Count"}
-    picks = st.multiselect("Columns for the chase worksheet",
-                           shuffled("s3opts", good | out_of_scope | traps))
+    picks = persist_multiselect("Columns for the chase worksheet",
+                                shuffled("s3opts", good | out_of_scope | traps), "s3picks")
 
     with st.expander("💡 Why each column is needed (reference)"):
         st.caption("Every legitimate aggregate-planning column and the job it does:")
@@ -1520,8 +1542,8 @@ elif stage == STAGES[4]:
     }
     answers = {}
     for name, (correct, opts) in defs.items():
-        answers[name] = (correct, st.radio(f"**{name}** =",
-                         shuffled(f"s4_{name}", opts), index=None, key=f"r_{name}"))
+        answers[name] = (correct, persist_radio_optional(
+            f"**{name}** =", shuffled(f"s4_{name}", opts), f"s4_{name}_ans"))
 
     with st.expander("💡 Help (no answers)"):
         st.write("- You can never hire a *fraction* of a worker, and you can't "
@@ -1685,10 +1707,10 @@ elif stage == STAGES[7]:
     whole, cap_ok = worker_model_control("chase")
 
     # ---- beginning-inventory policy (changes what "correct" means) ----
-    policy = st.radio(
+    policy = persist_radio(
         "How should the 2,400 beginning inventory be handled?",
-        list(BINV_POLICIES.keys()),
-        format_func=lambda k: BINV_POLICIES[k], key="chase_binv")
+        list(BINV_POLICIES.keys()), "chase_policy",
+        format_func=lambda k: BINV_POLICIES[k])
     if policy == "use_first":
         st.caption("The 2,400 is a one-time cushion that **must be consumed in "
                    "January** — January produces demand − 2,400 (fewer workers) and "
@@ -1940,15 +1962,17 @@ elif stage == STAGES[8]:
              "then hold it steady all year.")
 
     # ---- inventory policy (same idea as chase — it sets the ending target) ----
-    lvl_policy = st.radio(
+    lvl_policy = persist_radio(
         "Inventory policy — this sets the ending target:",
         ["No safety stock (consume the 2,400, end at 0)",
-         "Maintain 2,400 safety stock all year"], key="level_binv")
+         "Maintain 2,400 safety stock all year"], "level_policy")
     maintain = lvl_policy.startswith("Maintain")
     end_target = PARAMS["safety_stock"] if maintain else 0
+    _begin_tex = f"{PARAMS['beginning_inventory']:,}".replace(",", "{,}")
+    _safety_tex = f"{PARAMS['safety_stock']:,}".replace(",", "{,}")
     st.latex(r"\text{Level Rate}=\frac{\text{Total Demand}+"
-             + (r"\text{Safety }2{,}000" if maintain else r"0")
-             + r"-\text{Beginning }2{,}000}{12}")
+             + (r"\text{Safety }" + _safety_tex if maintain else r"0")
+             + r"-\text{Beginning }" + _begin_tex + r"}{12}")
 
     whole, cap_ok = worker_model_control("level")
     wmode = "whole" if whole else "partial"
@@ -2263,7 +2287,7 @@ elif stage == STAGES[9]:
              "Compare the **Months with shortages** and **Service level** rows."),
         ]
         for key, q, correct, hint in qdefs:
-            ans = st.radio(q, opts, index=None, key=key, horizontal=True)
+            ans = persist_radio_optional(q, opts, key, horizontal=True)
             if ans is not None:
                 if ans == correct:
                     st.success("✓ Yes — that's what the numbers show.")
@@ -2278,8 +2302,8 @@ elif stage == STAGES[9]:
                        f"Total cost row shows **{cheaper}** is lower — "
                        + ("your prediction held." if same else "the opposite of your guess."))
 
-        st.text_input("In your own words, what does the **cheaper** plan give up to be "
-                      "cheaper? (think about the rows above)", key="cmp_tradeoff")
+        persist_text_input("In your own words, what does the **cheaper** plan give up to "
+                           "be cheaper? (think about the rows above)", "cmp_tradeoff")
 
         # ---- #4 concept check: WHY the numbers came out that way ----
         st.divider()
@@ -2304,7 +2328,7 @@ elif stage == STAGES[9]:
              "Every up/down move in the workforce triggers a $600 hire or $900 layoff."),
         ]
         for key, q, correct, options, why in cc:
-            a = st.radio(q, options, index=None, key=key)
+            a = persist_radio_optional(q, options, key)
             if a is not None:
                 if a == correct:
                     st.success("✓ " + why)
@@ -2389,10 +2413,11 @@ elif stage == STAGES[10]:
         qc = st.columns(4)
         qworkers = []
         for i, (col, lab) in enumerate(zip(qc, qlabels)):
-            SS.setdefault(f"dc_q{i}", int(approx))
-            qworkers.append(col.number_input(lab, 0, 60, step=1, key=f"dc_q{i}"))
-        allow_ot = st.checkbox("Allow overtime (up to +20% output per quarter, "
-                               "$4.50/bottle) to trim shortages", key="dc_ot")
+            with col:
+                qworkers.append(persist_number(lab, f"dc_q{i}", default=int(approx),
+                                               min_value=0, max_value=60, step=1))
+        allow_ot = persist_checkbox("Allow overtime (up to +20% output per quarter, "
+                                    "$4.50/bottle) to trim shortages", "dc_ot")
 
         # build the hybrid plan
         workers = [qworkers[i // 3] for i in range(12)]
