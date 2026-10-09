@@ -1,0 +1,5 @@
+-r requirements.txt
+pytest>=7
+# PDF text extraction / rendering used by the report tests and visual checks
+pypdf>=4
+pymupdf>=1.23
