@@ -46,6 +46,14 @@ PRESET_LEARNING = {
     "perishable": "Test plans against real inventory age: spoilage, disposal and the heuristic's limits.",
 }
 
+# Parameters that affect only PRESENTATION or server behaviour, never what a correct answer
+# is. They are excluded from both hashes, so an instructor can retune feedback, timing or the
+# assignment name mid-course without invalidating verified plans or rejecting saved progress.
+NON_MODEL_PARAMS = frozenset({
+    "feedback_mode", "benchmark_reveal", "allow_replacement", "assignment_name",
+    "report_timezone", "autosave_seconds", "autosave_flush_seconds",
+})
+
 _SHAPE = [0.55, 0.60, 0.75, 1.00, 1.30, 1.55, 1.65, 1.40, 1.10, 0.85, 0.70, 0.55]
 
 
@@ -152,9 +160,14 @@ class Scenario:
                 "fixed_demand": self.fixed_demand}
 
     @property
+    def model_params(self) -> Dict[str, object]:
+        """Only the parameters that change a correct answer."""
+        return {k: v for k, v in self.params.items() if k not in NON_MODEL_PARAMS}
+
+    @property
     def config_hash(self) -> str:
-        """Hash of everything that changes a correct answer (parameters + demand)."""
-        blob = json.dumps({"p": self.params, "d": list(self.demand)}, sort_keys=True,
+        """Hash of everything that changes a correct answer (model parameters + demand)."""
+        blob = json.dumps({"p": self.model_params, "d": list(self.demand)}, sort_keys=True,
                           separators=(",", ":"))
         return hashlib.sha256(blob.encode()).hexdigest()[:16]
 
@@ -162,7 +175,7 @@ class Scenario:
     def instructor_config_hash(self) -> str:
         """Hash of the instructor-controlled part only (parameters + fixed demand, but NOT the
         per-student seed). Saved progress is compatible only if this matches."""
-        blob = json.dumps({"p": self.params, "fixed": list(self.demand) if self.fixed_demand
+        blob = json.dumps({"p": self.model_params, "fixed": list(self.demand) if self.fixed_demand
                            else None}, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(blob.encode()).hexdigest()[:16]
 

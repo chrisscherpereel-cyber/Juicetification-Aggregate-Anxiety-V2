@@ -28,6 +28,15 @@ from .scenario import Scenario
 SCHEMA = 3
 RETRY_SECONDS = 30
 
+# Autosave is DEBOUNCED: with ~30 students in one Streamlit process, saving on every content
+# change meant one encrypted upload per keystroke-commit (measured: 40 text edits -> 40
+# uploads), which saturates the Dropbox rate limit and makes every session wait on the
+# backoff sleep in student_store. Instead we coalesce rapid edits into one upload every
+# DEFAULT_DEBOUNCE_SECONDS, and save IMMEDIATELY on milestones (navigation, a passed check, a
+# generated report) so nothing important waits. A periodic flush in the UI covers the case
+# where a student stops interacting with changes still pending.
+DEFAULT_DEBOUNCE_SECONDS = 5.0
+
 
 # --------------------------------------------------------------------------- #
 # JSON helpers
@@ -139,6 +148,24 @@ def make_snapshot(pg: dict, scn: Scenario, identity_mode: str = "") -> dict:
             "pg": json_safe(pg)}
 
 
+def milestone_key(pg: dict, stage: str) -> str:
+    """Marks work a student would hate to lose, so it is saved without waiting for the
+    debounce: the stage they are on, which checks have passed, which plans are verified,
+    hybrid attempts, the scenario variant, and a generated report."""
+    plans = pg.get("plans") or {}
+    checks = pg.get("checks") or {}
+    return _canon({
+        "stage": stage,
+        "variant": pg.get("variant"),
+        "checks": sorted(k for k, v in checks.items() if (v or {}).get("passed")),
+        "plans": {k: [bool(v.get("completed")), v.get("sig"), v.get("tries"), v.get("stuck")]
+                  for k, v in plans.items()},
+        "hybrid": ((pg.get("hybrid") or {}).get("state") or {}).get("attempts"),
+        "report": (pg.get("report") or {}).get("attempt_id"),
+        "unc": bool((pg.get("uncertainty") or {}).get("committed")),
+    })
+
+
 def content_blob(pg: dict) -> str:
     """Change-detection key: only the student's work, not the save timestamp."""
     return _canon(json_safe(pg))
@@ -199,6 +226,7 @@ class SaveStatus:
     last_attempt: float = 0.0
     failures: int = 0
     saves: int = 0
+    pending: bool = False         # edits made since the last successful save
 
     def label(self) -> str:
         if self.state == "off":
@@ -208,6 +236,8 @@ class SaveStatus:
                     else " Nothing has been saved yet.")
             return f"⚠ Not saved. {self.last_error}{when}"
         if self.state == "saved":
+            if self.pending:
+                return f"✎ Unsaved changes — saving shortly (last saved {_fmt_time(self.last_ok)})"
             return f"✔ Saved at {_fmt_time(self.last_ok)}"
         return "… Saving"
 
@@ -227,6 +257,26 @@ def _fmt_time(ts: Optional[float]) -> str:
     return time.strftime("%H:%M:%S", time.localtime(ts)) if ts else "—"
 
 
+def should_save(status: SaveStatus, changed: bool, *, important: bool = False,
+                now: Optional[float] = None,
+                debounce: float = DEFAULT_DEBOUNCE_SECONDS) -> bool:
+    """Is a remote save due right now?
+
+    changed    there are edits that have not reached the server yet
+    important  a milestone the student would hate to lose (navigation, passed check,
+               generated report) -> save immediately, ignoring the debounce
+    Returns True for a retry of a previous failure once RETRY_SECONDS has elapsed, even when
+    nothing new changed, so a transient outage heals itself."""
+    now = now if now is not None else time.time()
+    if not changed:
+        return status.state == "failed" and (now - status.last_attempt) >= RETRY_SECONDS
+    if important or status.last_ok is None:
+        return True
+    if status.state == "failed":
+        return (now - status.last_attempt) >= RETRY_SECONDS
+    return (now - status.last_attempt) >= debounce
+
+
 def save_remote(store, game, sid, snapshot: dict, status: SaveStatus, *, progress: float = 0.0,
                 step: str = "", force: bool = False, now: Optional[float] = None) -> SaveStatus:
     """Try one save. Never raises. Throttles retries after a failure unless `force`."""
@@ -243,6 +293,7 @@ def save_remote(store, game, sid, snapshot: dict, status: SaveStatus, *, progres
             raise RuntimeError("storage disabled")
         status.state, status.last_ok, status.last_error = "saved", now, ""
         status.saves += 1
+        status.pending = False
     except BaseException as e:                                  # noqa: BLE001 — never interrupt the student
         if isinstance(e, (KeyboardInterrupt, SystemExit)):
             raise
