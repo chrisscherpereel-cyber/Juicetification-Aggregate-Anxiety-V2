@@ -4,22 +4,52 @@ by the SAME checker as typed work — Excel never bypasses the learning requirem
 
 from __future__ import annotations
 
-import pandas as pd
 import streamlit as st
-
-from aggplan import excel_io
-from aggplan.worksheet import blank_worksheet
 
 from .common import Ctx, SS, STRETCH
 
 LEVEL_ICON = {"error": "❌ Error", "warning": "⚠️ Warning", "info": "ℹ️ Note"}
 
 
+def _xl():
+    """Import the Excel layer on first use. It pulls in openpyxl (~270 ms and a chunk of
+    memory); on a shared server most students never open Excel, and the app should not pay
+    that on every cold start."""
+    from aggplan import excel_io
+    return excel_io
+
+
+def _tpl_key(ctx: Ctx, whole: bool) -> str:
+    return f"_xl_tpl_{ctx.h}_{whole}"
+
+
 def template_bytes(ctx: Ctx, whole: bool) -> bytes:
-    key = f"_xl_tpl_{ctx.h}_{whole}"
+    """Build (and remember) the student's workbook. Costs ~80 ms of CPU and tens of KB of
+    session memory, so callers build it ONLY when the student asks — with ~30 students in one
+    Streamlit process, doing it on every visit to a plan stage is pure waste for everyone who
+    never opens Excel."""
+    key = _tpl_key(ctx, whole)
     if key not in SS:
-        SS[key] = excel_io.build_template(ctx.scn, whole=whole, hybrid=True)
+        for stale in [k for k in SS if k.startswith("_xl_tpl_") and k != key]:
+            SS.pop(stale, None)          # keep at most one workbook per session
+        SS[key] = _xl().build_template(ctx.scn, whole=whole, hybrid=True)
     return SS[key]
+
+
+def template_download(ctx: Ctx, whole: bool, key: str, label: str) -> None:
+    """Show a Prepare button first; the workbook is only built when it is clicked."""
+    tkey = _tpl_key(ctx, whole)
+    if tkey in SS:
+        st.download_button(label, SS[tkey],
+                           file_name=f"Aggregate_Anxiety_scenario_{ctx.scn.seed}.xlsx",
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                           key=f"dl_{key}")
+        return
+    if st.button("🧾 Prepare my Excel workbook", key=f"prep_{key}"):
+        with st.spinner("Building your workbook…"):
+            template_bytes(ctx, whole)
+        st.rerun()
+    st.caption("The workbook is built on request, so it only uses server time if you want it.")
 
 
 def show_messages(res) -> None:
@@ -37,13 +67,10 @@ def render(ctx: Ctx, kind: str, whole: bool, set_worksheet) -> None:
             "as `LABOR` and `RATE`) and blank **Chase** and **Level** templates with exactly the "
             "same columns and rows as this worksheet — January is row 2, so your formulas are "
             "identical in Excel and here. Excel work is checked **exactly like** typed work.")
-        st.download_button("⬇ Download Excel workbook for my scenario", template_bytes(ctx, whole),
-                           file_name=f"Aggregate_Anxiety_scenario_{ctx.scn.seed}.xlsx",
-                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                           key=f"xl_dl_{kind}")
+        template_download(ctx, whole, f"xl_{kind}", "⬇ Download Excel workbook for my scenario")
         up = st.file_uploader("Upload your completed workbook (.xlsx)", type=["xlsx"], key=f"xl_up_{kind}")
         if up is not None:
-            res = excel_io.import_workbook(up.getvalue(), ctx.scn, whole=whole, kinds=(kind,))
+            res = _xl().import_workbook(up.getvalue(), ctx.scn, whole=whole, kinds=(kind,))
             show_messages(res)
             df = res.sheets.get(kind)
             if res.ok and df is not None:
@@ -57,11 +84,22 @@ def render(ctx: Ctx, kind: str, whole: bool, set_worksheet) -> None:
 
 
 def render_export(ctx: Ctx, plans: dict, whole: bool, key: str) -> None:
-    """Download completed plans (values) as Excel. `plans` is excel_io.export_workbook's dict."""
+    """Download completed plans (values) as Excel. `plans` is excel_io.export_workbook's dict.
+
+    Built only when asked: the workbook costs ~50 ms of CPU, and rebuilding it on every rerun
+    of the compare and submit stages wasted that for every student on a shared server."""
     if not plans:
         return
-    data = excel_io.export_workbook(ctx.scn, plans, whole=whole)
-    st.download_button("⬇ Download my completed plans (Excel)", data,
-                       file_name=f"Aggregate_Anxiety_plans_{ctx.scn.seed}.xlsx",
-                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                       key=key)
+    skey = f"_xl_exp_{key}_{ctx.h}"
+    if skey in SS:
+        st.download_button("⬇ Download my completed plans (Excel)", SS[skey],
+                           file_name=f"Aggregate_Anxiety_plans_{ctx.scn.seed}.xlsx",
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                           key=f"dl_{skey}")
+        return
+    if st.button("🧾 Prepare my completed plans (Excel)", key=f"prep_{skey}"):
+        with st.spinner("Building your workbook…"):
+            for stale in [k for k in SS if k.startswith("_xl_exp_")]:
+                SS.pop(stale, None)
+            SS[skey] = _xl().export_workbook(ctx.scn, plans, whole=whole)
+        st.rerun()

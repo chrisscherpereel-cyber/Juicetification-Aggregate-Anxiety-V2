@@ -140,6 +140,52 @@ streamlit run app.py
 
 Development / tests: `pip install -r requirements-dev.txt && python -m pytest tests -q`.
 
+## Running a class of ~30 on Streamlit Community Cloud
+
+Every session shares **one Python process and roughly one core** there, so what matters is how
+often expensive work happens, not how fast one rerun is. Measured on this machine with a
+realistic completed-student state:
+
+| | Before | After |
+|---|---|---|
+| Store uploads during a burst of edits | 1 per content change (40 edits → 40 uploads) | coalesced (40 edits → 0–1) |
+| Compare stage, per rerun | 92 ms | 30 ms |
+| First visit to a plan stage | ~480 ms | ~405 ms (cold process) / ~45 ms (warm) |
+| Cold-start import of the app modules | 821 ms | 658 ms |
+| Typical rerun, other stages | 15–31 ms | 15–31 ms |
+
+What changed:
+
+* **Autosave is debounced.** V2 sent one encrypted upload per content change, which for 30
+  students meant thousands of serialized HTTPS round trips and would hit the Dropbox rate
+  limit — at which point `student_store` backs off with `sleep` and students see stalls.
+  Rapid edits now coalesce into one upload every `autosave_seconds` (default 5). The sidebar
+  shows *Unsaved changes* while something is pending.
+* **Milestones still save instantly** — navigation, a passed check, a finished plan, a
+  generated report — so nothing you would hate to lose waits on the timer.
+* **A background flush** (`autosave_flush_seconds`, default 20, `0` disables) uploads pending
+  edits from a student who stopped interacting, since Streamlit otherwise only runs the
+  script on interaction. It costs one tiny rerun per interval per student and is active only
+  when server saving is configured.
+* **Excel workbooks are built on request.** The template (~80 ms) and the completed-plans
+  export (~50 ms) sit behind a *Prepare* button instead of being rebuilt on every rerun of
+  the plan, compare and submit stages. At most one workbook is kept per session.
+* **openpyxl is imported on first use**, not at startup, so a cold start (Community Cloud
+  sleeps idle apps) is faster and the baseline process is smaller for the students who never
+  open Excel.
+
+Tuning knobs, all optional: `autosave_seconds`, `autosave_flush_seconds`. Raising the first
+reduces uploads further at the cost of a longer unsaved window; set the second to `0` to
+remove background reruns entirely (pending edits then wait for the student's next click).
+
+Two things that are **not** bottlenecks, so they were left alone: the progress snapshot and
+workflow/completion logic (<1 ms per rerun on a 9 KB record) and the sidebar scenario tables
+(~0.2 ms). Changing those would have added complexity for no measurable gain.
+
+If the Community Cloud build is slow or memory-constrained, `scipy` in `requirements.txt`
+only powers the optional optimization benchmark: removing it makes the app report the
+benchmark as unavailable and changes nothing else.
+
 ## Instructor configuration (optional)
 
 Standalone practice needs **no setup**. Every parameter in [manifest.py](manifest.py) can be set by
@@ -158,6 +204,15 @@ the Juicetification Director form, or by URL: `?cfg=<base64 json>`, `?game=<code
 | `shelf_life_months`, `disposal_cost` | 0, 0.50 | perishability test |
 | `forecast_error_pct` | 0 | enables the forecast-error exercise |
 | `assignment_name`, `report_timezone` | …, server time | shown on the PDF (`America/Phoenix`, …) |
+| `autosave_seconds` | 5 | debounce window; rapid edits coalesce into one upload |
+| `autosave_flush_seconds` | 20 | background flush of pending saves (0 = off) |
+
+Settings that affect only presentation or server behaviour — `feedback_mode`,
+`benchmark_reveal`, `allow_replacement`, `assignment_name`, `report_timezone`,
+`autosave_seconds`, `autosave_flush_seconds` — are excluded from the scenario hash, so you can
+retune them **mid-course** without un-verifying completed plans or rejecting saved progress.
+Changing anything that alters a correct answer (costs, capacity, policies, demand) still does
+invalidate saved work, by design.
 
 Validation never crashes the app: a demand list that isn't exactly 12 non-negative numbers is
 ignored with a visible note; `bottles_per_worker` is derived from rate × hours × days if they

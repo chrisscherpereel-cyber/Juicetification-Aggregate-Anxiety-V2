@@ -15,6 +15,7 @@ code live in `aggplan/`; the stage screens live in `aggplan_ui/`.
 from __future__ import annotations
 
 import random
+import time
 
 import streamlit as st
 import streamlit.components.v1 as components
@@ -254,21 +255,42 @@ if stage_key in ("brief", "understand", "data", "columns", "formulas", "practice
 # --------------------------------------------------------------------------- #
 # 6. Autosave with visible status, recovery file
 # --------------------------------------------------------------------------- #
+DEBOUNCE = float(CFG.get("autosave_seconds", persist.DEFAULT_DEBOUNCE_SECONDS))
+SAVING_ON = bool(identity.recorded and store.enabled())
 status = persist.SaveStatus.from_dict(SS.get("_save"))
 snapshot = persist.make_snapshot(pg, scn, identity.mode)
-if identity.recorded and store.enabled():
+
+
+def run_autosave(force: bool = False) -> persist.SaveStatus:
+    """Debounced autosave. Rapid edits coalesce into one upload every DEBOUNCE seconds;
+    milestones (navigation, a passed check, a finished plan, a generated report) save at
+    once. Returns the updated status."""
+    st_ = persist.SaveStatus.from_dict(SS.get("_save"))
+    if not SAVING_ON:
+        st_.state, st_.pending = "off", False
+        SS["_save"] = st_.to_dict()
+        return st_
+    now = time.time()
     blob = persist.content_blob(pg)
-    due = blob != SS.get("_last_blob") or (status.state == "failed")
-    if status.state == "off":
-        status.state = "pending"
-    if due:
-        persist.save_remote(store, GAME, identity.sid, snapshot, status,
-                            progress=W.progress_fraction(pg, scn.config_hash), step=stage_key)
-        if status.state == "saved":
-            SS["_last_blob"] = blob
-else:
-    status.state = "off"
-SS["_save"] = status.to_dict()
+    changed = blob != SS.get("_last_blob")
+    milestone = persist.milestone_key(pg, stage_key)
+    important = force or (changed and milestone != SS.get("_last_milestone"))
+    st_.pending = changed
+    if st_.state == "off":
+        st_.state = "pending"
+    if persist.should_save(st_, changed, important=important, now=now, debounce=DEBOUNCE):
+        persist.save_remote(store, GAME, identity.sid,
+                            persist.make_snapshot(pg, scn, identity.mode), st_,
+                            progress=W.progress_fraction(pg, scn.config_hash), step=stage_key,
+                            now=now)
+        if st_.state == "saved":
+            SS["_last_blob"], SS["_last_milestone"] = blob, milestone
+            st_.pending = False
+    SS["_save"] = st_.to_dict()
+    return st_
+
+
+status = run_autosave()
 with save_slot.container():
     if status.state == "failed":
         st.error(status.label())
@@ -296,3 +318,22 @@ with rec_slot.container():
                     apply_saved(snap)
                     SS["_last_blob"] = None
                     st.rerun()
+
+
+# A student who makes an edit and then stops interacting would otherwise leave those changes
+# un-uploaded, because Streamlit only runs the script on interaction. This tiny fragment
+# reruns on a timer and flushes anything still pending. It renders nothing, runs only when
+# server saving is on, and costs one small rerun per interval per student (set
+# autosave_flush_seconds to 0 to turn it off).
+_FLUSH_EVERY = float(CFG.get("autosave_flush_seconds", 20))
+if SAVING_ON and _FLUSH_EVERY > 0 and hasattr(st, "fragment"):
+
+    @st.fragment(run_every=_FLUSH_EVERY)
+    def _autosave_flush():
+        # No force: the fragment's job is only to make a rerun HAPPEN while the student is
+        # idle. run_autosave still applies the debounce, so this never turns into an upload
+        # per rerun (the fragment body also executes on the initial render).
+        if persist.SaveStatus.from_dict(SS.get("_save")).pending:
+            run_autosave()
+
+    _autosave_flush()

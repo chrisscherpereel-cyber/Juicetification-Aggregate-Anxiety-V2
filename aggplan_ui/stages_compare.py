@@ -9,7 +9,7 @@ from typing import Dict, Optional
 import pandas as pd
 import streamlit as st
 
-from aggplan import benchmark, excel_io
+from aggplan import benchmark
 from aggplan import text as T
 from aggplan import workflow as W
 from aggplan.engine import (METRIC_DEFINITIONS, Decision, check_feasibility, is_feasible,
@@ -355,14 +355,11 @@ def render_hybrid(ctx: Ctx) -> None:
 
 def excel_import_hybrid(ctx: Ctx) -> None:
     with st.expander("📊 Monthly hybrid plan in Excel"):
-        data = excel_panel.template_bytes(ctx, True)
-        st.download_button("⬇ Download Excel workbook (Hybrid Plan sheet included)", data,
-                           file_name=f"Aggregate_Anxiety_scenario_{ctx.scn.seed}.xlsx",
-                           key="xl_dl_hybrid",
-                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        excel_panel.template_download(ctx, True, "xl_hybrid",
+                                      "⬇ Download Excel workbook (Hybrid Plan sheet included)")
         up = st.file_uploader("Upload completed workbook", type=["xlsx"], key="xl_up_hybrid")
         if up is not None:
-            res = excel_io.import_workbook(up.getvalue(), ctx.scn, whole=True, kinds=("hybrid",))
+            res = excel_panel._xl().import_workbook(up.getvalue(), ctx.scn, whole=True, kinds=("hybrid",))
             excel_panel.show_messages(res)
             if res.ok and res.hybrid:
                 if st.button("Load these monthly decisions", key="xl_load_hybrid"):
