@@ -1,5 +1,13 @@
 streamlit>=1.30
 pandas>=1.5
+# Excel template / import / export
+openpyxl>=3.1
+# PDF completion report
+reportlab>=4.0
+# Optional optimization benchmark (the app runs without it; the benchmark is then unavailable)
+scipy>=1.9
+# Report timezone names on Windows hosts
+tzdata
 # Only needed for the optional save/resume store (student_store.py).
 # Harmless if you don't configure storage; the app runs without it.
 dropbox>=11.0

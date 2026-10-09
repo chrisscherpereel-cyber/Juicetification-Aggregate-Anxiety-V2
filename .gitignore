@@ -5,16 +5,15 @@ __pycache__/
 .venv/
 venv/
 env/
-
 # Streamlit
 .streamlit/secrets.toml
-
 # OS / editors
 .DS_Store
 Thumbs.db
 .idea/
 .vscode/
-
 # Generated student reports
 *.txt
 !requirements.txt
+!requirements-dev.txt
+!aggplan/fonts/LICENSE-DejaVu.txt
