@@ -31,7 +31,7 @@ from .persistence import json_safe
 from .scenario import PRESET_LABELS, Scenario
 from . import text as T
 from . import workflow as W
-from .worksheet import WS_COLS, truth_worksheet
+from .worksheet import EDIT_COLS, WS_COLS, authoring_stats, entry_rows, truth_worksheet
 
 REPORT_SCHEMA = 1
 
@@ -129,6 +129,12 @@ def _plan_block(scn: Scenario, pg: dict, kind: str) -> Optional[dict]:
                      "Terminal requirement": T.term_inventory_text(scn, dec.policy.maintains_safety)},
         "summary": json_safe(summ), "checks": json_safe(checks), "feasible": is_feasible(checks),
         "monthly": _rows(truth_worksheet(df), WS_COLS),
+        # What the student actually TYPED, verbatim, plus how the worksheet was built.
+        # Grading compares calculated values, so 180 literal numbers score the same as a
+        # linked model; these let an instructor see which one they are looking at.
+        "entries": entry_rows(st.get("ws"), list(scn.months)),
+        "entry_columns": list(EDIT_COLS),
+        "authoring": authoring_stats(st.get("ws"), scn.named_constants()),
         "policy": {"worker_mode": dec.policy.worker_mode, "safety_target": dec.policy.safety_target,
                    "start_workers": dec.policy.start_workers},
         "student_total_entered": st.get("total_in"),

@@ -4,13 +4,14 @@ column letters and formulas are identical in both), the answer key, and grading.
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 import pandas as pd
 
 from .engine import Decision, covered_month1
-from .formula import GridResult, evaluate_grid
+from .formula import NUM_PLAIN_RE, GridResult, evaluate_grid
 from .scenario import Scenario
 
 ROW_BASE = 2    # spreadsheet row of January (row 1 = column headings), same in app and Excel
@@ -163,6 +164,68 @@ def grade_worksheet(df: pd.DataFrame, scn: Scenario, truth: pd.DataFrame, *, kin
                              and abs(hv - wv * scn.hpd) <= TOL["Paid Labor Hours/Day"])
                     else "wrong")
     return Grade(status, display, result.values, result, worker_expected)
+
+
+# --------------------------------------------------------------------------- #
+# What the student actually typed
+# --------------------------------------------------------------------------- #
+_REF_IN_FORMULA = re.compile(r"(?<![A-Za-z0-9_$])\$?([A-Za-z]{1,2})\$?(\d{1,3})(?![A-Za-z0-9_(])")
+
+
+def entry_rows(ws, months) -> List[Dict[str, str]]:
+    """The student's raw entries, exactly as typed, one dict per month. `ws` is the stored
+    worksheet state {column: [12 strings]}. Blank cells come back as ''."""
+    out = []
+    for i in range(len(months)):
+        row = {"Month": months[i]}
+        for c in EDIT_COLS:
+            vals = (ws or {}).get(c) or []
+            v = vals[i] if i < len(vals) else ""
+            row[c] = "" if v is None else str(v).strip()
+        out.append(row)
+    return out
+
+
+def authoring_stats(ws, constants) -> dict:
+    """How the worksheet was BUILT, not whether it is right.
+
+    Grading compares calculated values, so a plan typed as 180 literal numbers scores the
+    same as one built from linked formulas. These counts let an instructor see the
+    difference, and let a student see their own modelling habits."""
+    names = {k.upper() for k in (constants or {})}
+    formula = literal = other = blank = 0
+    refs = 0
+    used_names = set()
+    cells_with_refs = 0
+    for c in EDIT_COLS:
+        vals = (ws or {}).get(c) or []
+        for v in vals:
+            raw = "" if v is None else str(v).strip()
+            if raw == "":
+                blank += 1
+                continue
+            is_formula = raw.startswith("=")
+            body = raw[1:] if is_formula else raw
+            found = _REF_IN_FORMULA.findall(body)
+            hits = {w.upper() for w in re.findall(r"[A-Za-z_]+", body)} & names
+            used_names |= hits
+            if is_formula:
+                formula += 1
+            elif NUM_PLAIN_RE.match(raw):
+                literal += 1
+            else:
+                other += 1
+            if found and (is_formula or hits):
+                refs += len(found)
+                cells_with_refs += 1
+    filled = formula + literal + other
+    return {
+        "filled_cells": filled, "blank_cells": blank,
+        "formula_cells": formula, "literal_cells": literal, "other_cells": other,
+        "cells_referencing_other_cells": cells_with_refs, "cell_references": refs,
+        "named_constants_used": sorted(used_names),
+        "formula_share_pct": (100.0 * formula / filled) if filled else 0.0,
+    }
 
 
 def column_sums(result_values: Dict[str, List[Optional[float]]]) -> Dict[str, str]:

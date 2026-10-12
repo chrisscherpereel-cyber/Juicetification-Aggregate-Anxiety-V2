@@ -713,10 +713,41 @@ def _sec_usage(snap: dict, W: float) -> List:
     return out
 
 
+def _sec_authoring(snap: dict, W: float) -> List:
+    """How each worksheet was BUILT. Grading compares calculated values, so a plan typed as
+    literal numbers scores exactly the same as one built from linked formulas; this section
+    makes that difference visible without implying either is a better mark."""
+    plans = snap.get("plans") or {}
+    have = [(k, plans.get(k)) for k in ("chase", "level") if plans.get(k)]
+    out: List = [_P("8. How the worksheets were built", "h1"),
+                 _P("Shown for information. The plan check compares calculated values, so "
+                    "entering numbers directly and building linked formulas both pass; these "
+                    "counts describe the method, not its correctness.", "small")]
+    if not have:
+        out.append(_P(_xml_escape(NOT_COMPLETED) + ".", "body"))
+        return out
+    rows = [[_P("Measure", "hdr")] + [_P(_esc((p.get("label") or k).title()), "hdr_r") for k, p in have]]
+
+    def line(label, fn):
+        return [_PE(label)] + [_P(_esc(fn((p.get("authoring") or {}))), "cell_r") for _, p in have]
+
+    rows.append(line("Cells filled", lambda a: qty(a.get("filled_cells", 0))))
+    rows.append(line("Cells holding a formula", lambda a: qty(a.get("formula_cells", 0))))
+    rows.append(line("Cells holding a typed number", lambda a: qty(a.get("literal_cells", 0))))
+    rows.append(line("Share built with formulas", lambda a: "%.0f%%" % _num(a.get("formula_share_pct", 0))))
+    rows.append(line("Cells referring to other cells",
+                     lambda a: qty(a.get("cells_referencing_other_cells", 0))))
+    rows.append(line("Named scenario values used",
+                     lambda a: ", ".join(a.get("named_constants_used") or []) or "none"))
+    out.append(_tbl(rows, [W * 0.40] + [W * 0.30] * len(have), zebra=False))
+    out.append(_P("The exact entries appear in the appendix.", "small"))
+    return out
+
+
 def _sec_integrity(snap: dict, W: float) -> List:
     integ = snap.get("integrity") or {}
     att = snap.get("attempt") or {}
-    out: List = [_P("8. Report integrity", "h1")]
+    out: List = [_P("9. Report integrity", "h1")]
     pairs = [("Attempt ID", _esc(att.get("id", ""))),
              ("Snapshot hash (SHA-256)",
               '<font name="DejaVuMono">%s</font>' % _esc(integ.get("snapshot_hash", "")))]
@@ -800,6 +831,34 @@ _HYBRID_LABELS = {
 }
 
 
+def _entries_table(entries: List[dict], cols: List[str], avail: float) -> Table:
+    """Student entries rendered as TEXT, verbatim. Formulas must read exactly as typed, so
+    nothing here is parsed, reformatted or evaluated."""
+    short = {"Month": "Mon", "Beginning Inventory": "BegInv", "Beginning Backlog": "BegBkl",
+             "Regular Production": "RegProd", "Paid Labor Hours/Day": "Hrs/Day",
+             "Ending Inventory": "EndInv", "Backorders": "Backord", "Regular Labor Cost": "Labor$",
+             "Hiring Cost": "Hire$", "Layoff Cost": "Layoff$", "Holding Cost": "Hold$",
+             "Backorder Cost": "Bkord$", "Total Monthly Cost": "Total$", "Workers": "Wkrs",
+             "Hires": "Hire", "Layoffs": "Layoff"}
+    labels = [short.get(c, c) for c in cols]
+    # three-letter months: this table is about the entries, and a wrapped "Septemb/er"
+    # steals width from the formulas it exists to show
+    body = [[(str(r.get(c, ""))[:3] if c == "Month" else str(r.get(c, ""))) for c in cols]
+            for r in entries]
+    size = 7.0
+    widths, fits = _auto_widths(labels, body, None, avail, size)
+    if not fits:                                   # long formulas: shrink once, then wrap
+        size = 6.0
+        widths, fits = _auto_widths(labels, body, None, avail, size)
+    hdr = ParagraphStyle("eh", parent=ST["hdr"], fontSize=size, leading=size + 1.6)
+    cel = ParagraphStyle("ec", parent=ST["cell"], fontSize=size, leading=size + 1.6,
+                         fontName="DejaVuMono", wordWrap="CJK")
+    rows = [[Paragraph(_esc(short.get(c, c)), hdr) for c in cols]]
+    for r in body:
+        rows.append([Paragraph(_esc(v) if v else "&nbsp;", cel) for v in r])
+    return _tbl(rows, widths, zebra=True)
+
+
 def _appendix_flowables(snap: dict, avail: float) -> List:
     from .worksheet import WS_COLS
     plans = snap.get("plans") or {}
@@ -819,17 +878,48 @@ def _appendix_flowables(snap: dict, avail: float) -> List:
             (p.get("settings") or {}).get("Worker model", ""),
             (p.get("settings") or {}).get("Inventory policy", "")), "small"))
         out.append(_monthly_table(p.get("monthly") or [], list(WS_COLS), avail))
+    # The student's own entries, verbatim, so an instructor can see the formulas (or the
+    # absence of them) rather than only the engine's numbers.
+    for key, title in (("chase", "Appendix C. Chase plan — entries exactly as the student typed them"),
+                       ("level", "Appendix D. Level plan — entries exactly as the student typed them")):
+        p = plans.get(key)
+        out.append(PageBreak())
+        out.append(_P(_xml_escape(title), "h1"))
+        if p is None:
+            out.append(_P(_xml_escape(NOT_COMPLETED) + ".", "body"))
+            continue
+        entries = p.get("entries") or []
+        cols = ["Month"] + list(p.get("entry_columns") or [])
+        if not entries:
+            out.append(_P("No entries were recorded for this plan.", "body"))
+            continue
+        a = p.get("authoring") or {}
+        out.append(_P("%s of %s filled cells hold a formula. A blank cell means the value was "
+                      "carried by a formula elsewhere or left empty." % (
+                          qty(a.get("formula_cells", 0)), qty(a.get("filled_cells", 0))), "small"))
+        # Seventeen columns of formulas cannot be read side by side on one landscape page,
+        # so split them the way the worksheet is taught: quantities first, then costs.
+        ent = [c for c in cols if c != "Month"]
+        cost = [c for c in ent if c.endswith("Cost")]
+        quant = [c for c in ent if c not in cost]
+        for sub, group in (("Quantities", quant), ("Costs", cost)):
+            if not group:
+                continue
+            out.append(Spacer(1, 6))
+            out.append(_P(_xml_escape(sub), "h2"))
+            out.append(_entries_table(entries, ["Month"] + group, avail))
+
     h = snap.get("hybrid")
     bf = (h or {}).get("best_feasible")
     if bf:
         out.append(PageBreak())
-        out.append(_P("Appendix C. Hybrid challenge — best feasible plan, monthly detail", "h1"))
+        out.append(_P("Appendix E. Hybrid challenge — best feasible plan, monthly detail", "h1"))
         out.append(_monthly_table(bf.get("monthly") or [], list(_HYBRID_COLS), avail, _HYBRID_LABELS))
         out.append(_P("Abbreviations: Prod. = production; Inv. = inventory; Begin. = beginning; "
                       "Subcontr. = subcontract.", "note"))
     else:
         out.append(CondPageBreak(2.2 * inch))
-        out.append(_P("Appendix C. Hybrid challenge — best feasible plan, monthly detail", "h1"))
+        out.append(_P("Appendix E. Hybrid challenge — best feasible plan, monthly detail", "h1"))
         out.append(_P("Not attempted." if h is None else "No feasible hybrid plan was found.", "body"))
     return out
 
@@ -967,6 +1057,7 @@ def build_pdf(snapshot: dict) -> bytes:
     story += _sec_reflections(snap, pbody_w)
     story += _sec_hybrid(snap, pbody_w)
     story += _sec_usage(snap, pbody_w)
+    story += _sec_authoring(snap, pbody_w)
     story += _sec_integrity(snap, pbody_w)
     story += [NextPageTemplate("landscape"), PageBreak()]
     story += _appendix_flowables(snap, lbody_w)
