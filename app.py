@@ -185,25 +185,23 @@ ctx = C.Ctx(scn=scn, pg=pg, identity=identity, cfg=CFG, store=store, game=GAME, 
 # 4. Sidebar
 # --------------------------------------------------------------------------- #
 with st.sidebar:
-    st.title("🧃 Juicetification")
-    st.caption(f"Aggregate Anxiety · model {MODEL_VERSION}")
-    st.caption(f"🔐 {identity.label}" + (f" — {identity.message}" if identity.message and identity.mode != "signed" else ""))
-    pg["student_name"] = st.text_input("Student name", pg.get("student_name", ""), key="in_name")
-    pg["section"] = st.text_input("Course section", pg.get("section", ""), key="in_section")
-    save_slot = st.empty()
+    # The navigation comes FIRST. Measured at 1366x768 (a common laptop), the old order put
+    # "Your path" 530px down the page, so four of the five groups sat below the fold and a
+    # student had to scroll to discover that building the plans was even part of the
+    # assignment. Identity fields moved to the stage that needs them (Submit), and the three
+    # header captions collapsed into one.
+    st.markdown("### 🧃 Your path")
     statuses = W.all_status(pg, scn.config_hash)
-    st.markdown("**Your path**")
     for gkey, glabel in W.GROUPS:
-        stg = W.stages_in(gkey)
-        n_done = sum(1 for s in stg if statuses[s.key].done)
-        with st.expander(f"{glabel}  ({n_done}/{len(stg)})", expanded=(W.group_of(stage_key) == gkey)):
-            for s in stg:
-                stt = statuses[s.key]
-                st.button(f"{stt.icon} {s.title}" + ("" if s.required else " (optional)"),
-                          key=f"nav_{s.key}", on_click=C.go_to, args=(s.key,),
-                          type="primary" if s.key == stage_key else "secondary",
-                          **C.STRETCH, help=f"{stt.text}")
+        st.caption(glabel)
+        for s_ in W.stages_in(gkey):
+            stt = statuses[s_.key]
+            st.button(f"{stt.icon} {s_.title}" + ("" if s_.required else " (optional)"),
+                      key=f"nav_{s_.key}", on_click=C.go_to, args=(s_.key,),
+                      type="primary" if s_.key == stage_key else "secondary",
+                      **C.STRETCH, help=f"{stt.text}")
     st.caption("✅ complete · 🟡 in progress · ⬜ not started · ➕ optional")
+    save_slot = st.empty()
     with st.expander("📋 Scenario data (open any time)"):
         stages_early.brief_tables(ctx, height=200)
     with st.expander("❓ Help and how it works"):
@@ -219,6 +217,13 @@ with st.sidebar:
             "your instructor set live feedback).\n\n"
             "**Keyboard** — every button and field is reachable with Tab; in the grid use Enter, "
             "Tab and the arrow keys.")
+    name_set = bool((pg.get("student_name") or "").strip())
+    st.caption(("👤 " + pg["student_name"] if name_set
+                else "👤 Name not set — add it on **Submit and reflect**")
+               + f"  ·  🔐 {identity.label}")
+    if identity.message and identity.mode != "signed":
+        st.caption(identity.message)
+    st.caption(f"Aggregate Anxiety · model {MODEL_VERSION}")
     for n in scn.notices:
         st.warning("Configuration note: " + n)
     rec_slot = st.empty()
@@ -228,9 +233,9 @@ with st.sidebar:
 # --------------------------------------------------------------------------- #
 scroll_to_top(SS["_nav_token"])
 stage_def = W.STAGE_BY_KEY[stage_key]
+C.stepper(ctx)
 if stage_key != "brief":
     st.title(stage_def.title)
-if stage_key != "brief":
     C.task_card(ctx)
 
 RENDER = {

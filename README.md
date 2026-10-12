@@ -31,6 +31,14 @@ progress, a **Check my work** button, and — if the stage isn't complete — **
 | 4 · Compare and improve | Compare plans · Hybrid design challenge (optional) · Advanced options (optional) |
 | 5 · Submit and reflect | Recommendation + reflections · Download PDF report |
 
+* **Navigation.** A five-step strip across the top of every stage shows which group you are in
+  and how much of it is done, and jumps to the first unfinished stage of any group. The sidebar
+  lists all fourteen stages as single-click buttons — nothing to expand. Back and Next both name
+  their destination, and neither drops you into an optional stage you skipped. A returning
+  student gets **Continue where I left off** on the brief. (Measured at 1366×768: "Your path"
+  moved from 530 px down the page to 76 px, and all fourteen stage buttons now render — four of
+  the five groups used to sit below the fold.) Your name and section live on **Submit and
+  reflect**, the stage that needs them.
 * Scenario data and the relevant formulas are one click away beside the worksheet.
 * **Feedback is explicit by default.** Calculated values and formula errors update as you type, but
   ✔/✖ verdicts appear only after **Check my work** (set `feedback_mode=live` for the V2 behaviour).
