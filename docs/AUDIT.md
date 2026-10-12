@@ -124,3 +124,32 @@ Still open, as deliberate scope choices rather than defects:
 * `COUNTIF` and `SUMPRODUCT` are still unsupported: `COUNTIF` needs string criteria such as
   `">0"`, which is a much larger parser change than the rest.
 
+## Verified in real Excel (2026-10-12)
+
+The workbook was finally opened in **Excel 16.0** via COM, recalculated, and exported to PDF
+for visual inspection — the gap every previous round flagged as unclosable.
+
+Confirmed working: the file opens with **no repair prompt**; Σ totals are real formulas and
+compute (`=SUM(E2:E13)` → a number); conditional formatting fires on the right cells (amber on
+the two months above a 12,000 storage limit, red on the five backorder months) and the data
+bar renders; the chart draws; the Excel Skills check formulas evaluate. Excel's own
+recalculation of a student-built level plan totalled **$489,375.00**, matching the app engine
+exactly — an independent cross-check of the model through a second formula engine.
+
+The `$` exercise was driven as a student would: typing `=E45*J44` and filling down gives
+`OK` on the first row then `Not yet - check the $ signs` on all five below (the reference
+drifts onto empty cells and the costs collapse to 0); `=E45*$J$44` gives `OK` six times.
+The lesson works in practice, not just in principle.
+
+Two defects that **only** rendering could reveal:
+
+| # | Finding | Status | Impact | Pri |
+|---|---------|--------|--------|-----|
+| G4 | Wrapped legend text in columns S/T forced those worksheet rows taller. Rows 2–5 are also January–May, so the printed plan grid had five tall rows and seven short ones. | Confirmed, fixed | Visibly uneven worksheet | P3 |
+| G5 | The skills-sheet tables wrapped only their last column, so the middle "What it does" column was clipped by the next column: "how many cells in a range contain a numbe", "picks one of two results depending on a te". | Confirmed, fixed | Students could not read what half the functions do | P2 |
+
+G4 was fixed by moving the legend below the twelve month rows (anchored objects such as the
+chart never affect row height, so only the text had to move); G5 by wrapping every cell of
+those tables rather than only the last. Both were invisible to openpyxl, which reports cell
+values and never lays anything out.
+

@@ -186,14 +186,18 @@ def test_legend_and_chart_live_right_of_column_q_so_the_importer_ignores_them():
     q = worksheet.WS_COLS.index("Total Monthly Cost") + 1              # 17 = column Q
     for name in PLANS:
         ws = wb[name]
-        assert ws["S1"].value and ws["R1"].value is None               # clearly separated
+        # the legend sits in S/T somewhere; its row is a layout detail, but it must be right
+        # of column Q and have an empty column R between it and the grid
+        legend_rows = [r for r in range(1, excel_io.MAX_ROWS + 1) if ws.cell(row=r, column=19).value]
+        assert legend_rows
+        for r in legend_rows:
+            assert ws.cell(row=r, column=18).value is None             # column R stays clear
         # the importer reads A..Q only, and rejects anything it finds in rows 15..60 there
         for r in range(15, excel_io.MAX_ROWS + 1):
             for c in range(1, q + 1):
                 assert ws.cell(row=r, column=c).value is None
-        # the chart is anchored below the legend, well clear of the grid
         anchor = ws._charts[0].anchor._from
-        assert anchor.col >= q and anchor.row >= 7
+        assert anchor.col >= q                                          # clear of the grid
     res = import_workbook(build_template(S), S, kinds=("chase", "level"))
     assert not res.errors
 
@@ -230,7 +234,7 @@ def test_colour_legend_is_worded_not_just_coloured():
     for name in PLANS:
         ws = wb[name]
         legend = "\n".join(str(ws.cell(row=r, column=c).value)
-                           for r in range(1, 9) for c in (19, 20)
+                           for r in range(1, excel_io.MAX_ROWS + 1) for c in (19, 20)
                            if ws.cell(row=r, column=c).value)
         assert "COLOUR KEY" in legend
         assert "Red fill in column K (Backorders)" in legend
