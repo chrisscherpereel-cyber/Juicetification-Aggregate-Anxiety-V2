@@ -103,7 +103,35 @@ sheet, Column Guide), complete it, and upload it. The import validates the workb
 active scenario (seed/config/model version, headings, locked cells, text in numeric cells, Excel
 errors) with actionable messages, then loads it into the **same** worksheet graded by the **same**
 checker. Completed plans can be exported (values equal the engine's, with assumptions and
-metric definitions). Limits: files are not opened in Excel by the test suite (see *Verification*).
+metric definitions). The test suite checks workbooks with openpyxl, which reads cell values but
+never lays anything out — so run the two-minute check below after changing `aggplan/excel_io.py`.
+
+## Checking the workbook in Excel
+
+openpyxl reports cell *values*; it never lays anything out or evaluates a formula. Three real
+defects got past a green test suite because of that — Σ totals stored as literal text,
+legend text inflating the month rows, and clipped function descriptions on the sheet whose job
+is teaching those functions. **After any change to `aggplan/excel_io.py`, open one workbook.**
+
+```bash
+python -c "from aggplan.scenario import resolve_scenario; from aggplan import excel_io; open('check.xlsx','wb').write(excel_io.build_template(resolve_scenario({}, 7)))"
+```
+
+Open `check.xlsx` and confirm:
+
+1. **It opens with no repair prompt.**
+2. **Chase Plan** — the twelve month rows are the same height; `Q14` shows a *number*, not the
+   text `=SUM(Q2:Q13)`; the chart is there.
+3. **Excel Skills** — no description is cut off mid-word; do the `$` exercise both ways. Type
+   `=E45*J44` in F45 and fill down to F50: the Check column should read `OK` then
+   *"Not yet - check the $ signs"* five times. Change it to `=E45*$J$44` and fill down again:
+   six `OK`s. If that fails, the lesson is broken even when every test passes.
+4. Fill a few cells of **Level Plan** so a month ends with backorders — the Backorders cell
+   should turn red, with the worded legend below the grid explaining why.
+
+Last verified in Excel 16.0 on 2026-10-12: all of the above, plus Excel's own recalculation of
+a student-built level plan totalling **$489,375.00**, matching the app engine exactly — the
+model cross-checked through a second formula engine.
 
 ## PDF completion report (replaces the completion code)
 
@@ -334,8 +362,10 @@ benchmark soundness (no random feasible plan beats the "optimal" cost), formula 
 Excel round trips, PDF content/labelling/special characters/long text/matching totals,
 versioning, identity, storage failure, and Streamlit smoke runs of every stage. Visual checks of
 the PDF and a manual browser check of the worksheet grid were done; the grid's keyboard behaviour
-is Streamlit's. **Not verified:** workbooks were never opened in Excel or LibreOffice (only
-re-read with openpyxl); a real Dropbox store and signed links were exercised with fakes only.
+is Streamlit's. A generated workbook **has** been opened and recalculated in Excel 16.0 (see
+*Checking the workbook in Excel*) — but that is a manual step the suite cannot do for you.
+**Not verified:** LibreOffice; a real Dropbox store and signed links were exercised with fakes
+only.
 
 ## Known limitations
 
