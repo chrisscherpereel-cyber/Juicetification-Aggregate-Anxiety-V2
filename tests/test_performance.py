@@ -15,6 +15,7 @@ from streamlit.testing.v1 import AppTest
 import student_store
 from aggplan import persistence as P
 from aggplan import workflow as W
+from aggplan import text as T
 from aggplan.scenario import NON_MODEL_PARAMS, resolve_scenario
 from aggplan.worksheet import EDIT_COLS
 from juice_director import encode_cfg
@@ -245,3 +246,49 @@ def test_model_settings_still_invalidate_student_work():
 def test_non_model_params_are_all_real_parameters():
     from manifest import MANIFEST
     assert NON_MODEL_PARAMS <= set(MANIFEST["params"]), "stale name in NON_MODEL_PARAMS"
+
+
+# --------------------------------------------- always-on scenario tables
+def test_scenario_tables_are_static_html_not_dataframes():
+    """Streamlit renders expander contents whether or not they are open, so the two
+    st.dataframe calls these replace cost CPU on EVERY rerun of EVERY stage (measured:
+    the chase stage, which renders them twice, dropped 63.6 -> 56.9 CPU ms). The HTML is
+    built once per scenario and cached, so the data stays permanently visible."""
+    import streamlit as st
+    from aggplan.identity import Identity
+    from aggplan_ui import stages_early as E
+    from aggplan_ui.common import Ctx
+
+    scn = resolve_scenario({}, 7)
+    ctx = Ctx(scn=scn, pg={"ans": {}}, identity=Identity(None, None, False, "practice"),
+              cfg={}, store=None, game=None, stage="brief")
+    html = E.scenario_tables_html(ctx)
+    assert "<table" in html and html.count("<tr>") >= 12 + len(T.param_rows(scn))
+    for month in scn.months:
+        assert month in html
+    assert f"{scn.total_demand:,.0f}" in html
+    assert "Beginning inventory" in html                 # a parameter row
+    # cached per scenario: the second call must not rebuild
+    key = f"_sc_html_{ctx.h}"
+    assert key in st.session_state
+    assert E.scenario_tables_html(ctx) is html
+
+
+def test_scenario_table_text_is_escaped():
+    """The content is app-generated, but escaping keeps a stray <, > or & from breaking the
+    table if a parameter label ever changes."""
+    from aggplan.identity import Identity
+    from aggplan_ui import stages_early as E
+    from aggplan_ui.common import Ctx
+    scn = resolve_scenario({}, 7)
+    ctx = Ctx(scn=scn, pg={"ans": {}}, identity=Identity(None, None, False, "practice"),
+              cfg={}, store=None, game=None, stage="brief")
+    html = E.scenario_tables_html(ctx)
+    assert "<script" not in html.lower()
+
+
+def test_background_flush_default_is_gentle_for_a_whole_class():
+    """30 students at a 20 s flush was 1.5 background reruns/sec of pure overhead."""
+    from manifest import MANIFEST
+    assert MANIFEST["params"]["autosave_flush_seconds"]["default"] >= 60
+    assert resolve_scenario({}, 7)["autosave_flush_seconds"] >= 60

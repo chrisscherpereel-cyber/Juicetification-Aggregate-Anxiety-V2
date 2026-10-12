@@ -360,7 +360,7 @@ with rec_slot.container():
 # reruns on a timer and flushes anything still pending. It renders nothing, runs only when
 # server saving is on, and costs one small rerun per interval per student (set
 # autosave_flush_seconds to 0 to turn it off).
-_FLUSH_EVERY = float(CFG.get("autosave_flush_seconds", 20))
+_FLUSH_EVERY = float(CFG.get("autosave_flush_seconds", 60))
 if SAVING_ON and _FLUSH_EVERY > 0 and hasattr(st, "fragment"):
 
     @st.fragment(run_every=_FLUSH_EVERY)

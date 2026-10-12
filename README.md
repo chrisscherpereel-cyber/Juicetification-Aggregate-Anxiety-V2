@@ -247,6 +247,23 @@ realistic completed-student state:
 | Cold-start import of the app modules | 821 ms | 658 ms |
 | Typical rerun, other stages | 15–31 ms | 15–31 ms |
 
+Measured again later, against the documented Community Cloud limits (CPU **0.078 cores
+minimum**, 2 maximum; memory **690 MB minimum**):
+
+* **Memory is not the constraint.** 30 sessions of student state is **2.7 MB** (88 KB each);
+  155 MB worst case including a cached workbook and PDF for everyone, against a 690 MB floor.
+* **Concurrency adds no CPU.** Streamlit runs one process and script execution is GIL-bound:
+  throughput measured 340 → 315 units/sec going from 1 to 30 threads, so the documented
+  2-core ceiling does not help Python work. Plan against ~1 core.
+* **~42 CPU ms** for the heaviest rerun (the chase build stage) ⇒ about **24 reruns/sec** at a
+  full core, against a peak plausible demand from 30 students of ~9/sec. Comfortable at half
+  a core or better; **oversubscribed roughly 5× if the app is throttled to the 0.078-core
+  floor**, which is outside your control and cannot be monitored. For a timed, whole-class
+  activity it is worth asking Streamlit for increased resources, or staggering starts.
+* The scenario tables are rendered as cached HTML rather than two `st.dataframe` calls,
+  because expander contents render whether or not they are open: the chase stage, which shows
+  them twice, measured **63.6 → 56.9 CPU ms** in a paired A/B.
+
 What changed:
 
 * **Autosave is debounced.** V2 sent one encrypted upload per content change, which for 30
@@ -256,7 +273,7 @@ What changed:
   shows *Unsaved changes* while something is pending.
 * **Milestones still save instantly** — navigation, a passed check, a finished plan, a
   generated report — so nothing you would hate to lose waits on the timer.
-* **A background flush** (`autosave_flush_seconds`, default 20, `0` disables) uploads pending
+* **A background flush** (`autosave_flush_seconds`, default 60, `0` disables) uploads pending
   edits from a student who stopped interacting, since Streamlit otherwise only runs the
   script on interaction. It costs one tiny rerun per interval per student and is active only
   when server saving is configured.
@@ -300,7 +317,7 @@ the Juicetification Director form, or by URL: `?cfg=<base64 json>`, `?game=<code
 | `assignment_name`, `report_timezone` | …, server time | shown on the PDF (`America/Phoenix`, …) |
 | `min_formula_share_pct` | 0 | minimum % of worksheet cells that must use a formula (0 = encourage only, never block) |
 | `autosave_seconds` | 5 | debounce window; rapid edits coalesce into one upload |
-| `autosave_flush_seconds` | 20 | background flush of pending saves (0 = off) |
+| `autosave_flush_seconds` | 60 | background flush of pending saves (0 = off) |
 
 Settings that affect only presentation or server behaviour — `feedback_mode`,
 `benchmark_reveal`, `allow_replacement`, `assignment_name`, `report_timezone`,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import math
 
 import pandas as pd
@@ -40,13 +41,40 @@ def resume(ctx: Ctx) -> None:
                       key="resume_btn", type="primary", on_click=go_to, args=(nxt,))
 
 
+def scenario_tables_html(ctx: Ctx) -> str:
+    """The scenario's forecast and parameters as ONE static HTML table pair.
+
+    These sit inside expanders in the sidebar and on both build stages, and Streamlit renders
+    expander contents whether or not they are open — so the two st.dataframe calls this
+    replaces were costing ~5 CPU ms on every rerun of every stage, for data that never
+    changes within a scenario. The HTML is built once per scenario and cached in the session,
+    which keeps the data permanently visible instead of hiding it behind a toggle."""
+    key = f"_sc_html_{ctx.h}"
+    if key in SS:
+        return SS[key]
+    s = ctx.scn
+    rows = "".join(
+        f"<tr><td class='l'>{html.escape(m)}</td><td>{d:,.0f}</td></tr>"
+        for m, d in zip(s.months, s.demand))
+    forecast = (f"<div class='aa-wrap'><table class='aa-table'>"
+                f"<caption>Forecast — total {s.total_demand:,.0f} bottles</caption>"
+                f"<thead><tr><th class='l'>Month</th><th>Demand (bottles)</th></tr></thead>"
+                f"<tbody>{rows}</tbody></table></div>")
+    prow = "".join(
+        f"<tr><td class='l'>{html.escape(str(a))}</td><td>{html.escape(str(b))}</td>"
+        f"<td class='l'>{html.escape(str(c))}</td></tr>" for a, b, c in T.param_rows(s))
+    params = (f"<div class='aa-wrap'><table class='aa-table'>"
+              f"<caption>Costs, capacity and rules</caption>"
+              f"<thead><tr><th class='l'>Item</th><th>Value</th><th class='l'>Unit</th></tr>"
+              f"</thead><tbody>{prow}</tbody></table></div>")
+    SS[key] = forecast + "<div style='height:8px'></div>" + params
+    return SS[key]
+
+
 def brief_tables(ctx: Ctx, where=st, height: int = 250) -> None:
-    """Scenario data readable beside any worksheet."""
-    where.markdown(f"**Forecast — total {ctx.scn.total_demand:,.0f} bottles**")
-    where.dataframe(demand_table(ctx), hide_index=True, **STRETCH, height=height)
-    where.markdown("**Costs, capacity and rules (with units)**")
-    where.dataframe(pd.DataFrame(T.param_rows(ctx.scn), columns=["Item", "Value", "Unit"]),
-                    hide_index=True, **STRETCH, height=height)
+    """Scenario data readable beside any worksheet. `height` is accepted for call
+    compatibility and ignored: the HTML tables size themselves."""
+    where.markdown(scenario_tables_html(ctx), unsafe_allow_html=True)
 
 
 def model_rules(ctx: Ctx) -> None:
