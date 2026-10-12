@@ -363,8 +363,14 @@ def render_plan(ctx: Ctx, kind: str) -> None:
 
     with st.expander("🧮 How you are building this worksheet", expanded=False):
         f, lit, filled = auth["formula_cells"], auth["literal_cells"], auth["filled_cells"]
-        st.markdown(f"**{f} of {filled} filled cells use a formula** "
-                    f"({auth['formula_share_pct']:.0f}%); {lit} hold a typed number.")
+        if not filled:
+            st.markdown("**Nothing entered yet.** You can type numbers, but a formula such as "
+                        f"`=F{ROW_BASE}*LABOR` or `=MAX(0,C{ROW_BASE}+E{ROW_BASE}-B{ROW_BASE})` "
+                        "recalculates itself when an input changes — that is the habit the Excel "
+                        "part of this assignment is for.")
+        else:
+            st.markdown(f"**{f} of {filled} filled cells use a formula** "
+                        f"({auth['formula_share_pct']:.0f}%); {lit} hold a typed number.")
         if auth["named_constants_used"]:
             st.caption("Scenario values used by name: "
                        + ", ".join("`%s`" % n for n in auth["named_constants_used"]))

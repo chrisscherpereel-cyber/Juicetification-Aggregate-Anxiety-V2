@@ -636,10 +636,14 @@ def _skills_sheet(wb: Workbook, scn: Scenario):
         "The app's checker knows the same names, so a formula written with them works unchanged "
         "in Excel and in the in-app worksheet.",
     ])
-    r = _sk_table(ws, r, ["Instead of", "Write", "Because"], [
-        ["=F2*18.5", "=F2*LABOR", "the cost of a worker is given data: let the workbook supply it"],
-        ["=E2/9500", "=E2/RATE", "RATE is the bottles one worker can make in a month"],
-        ["=J2*0.25", "=J2*HOLD", "HOLD is the cost of holding one bottle for one month"],
+    const = scn.named_constants()
+    r = _sk_table(ws, r, ["Instead of retyping", "Write", "Because"], [
+        [f"=F2*{const['LABOR']:g}", "=F2*LABOR",
+         "the monthly cost of one worker is given data: let the workbook supply it"],
+        [f"=E2/{const['RATE']:g}", "=E2/RATE",
+         "RATE is the bottles one worker can make in a month"],
+        [f"=J2*{const['HOLD']:g}", "=J2*HOLD",
+         "HOLD is the cost of holding one bottle for one month"],
     ], wrap_last=True)
     r = _sk_lines(ws, r, [
         "Now go to the 'Chase Plan' sheet and start with column E. The 'Column Guide' sheet tells "
@@ -786,18 +790,23 @@ def _readme_sheet(wb: Workbook, scn: Scenario, whole: bool, hybrid: bool, studen
          "so you learn the same method.", None),
         ("", None),
         ("STEP BY STEP", BOLD),
-        ("1. Read the 'Scenario' sheet: it has your forecast and every cost/capacity value.", None),
-        ("2. Work in 'Chase Plan' and 'Level Plan'" + (" (and 'Hybrid Plan')" if hybrid else "")
+        ("1. New to Excel, or rusty? Start on the 'Excel Skills' sheet (the next tab). It covers "
+         "writing a formula, copying it down, relative vs absolute references ($), the functions "
+         "the app accepts, what the error values mean and how the named cells work - with a "
+         "two-minute self-checking exercise. That sheet is practice only: it is never imported "
+         "and never graded.", None),
+        ("2. Read the 'Scenario' sheet: it has your forecast and every cost/capacity value.", None),
+        ("3. Work in 'Chase Plan' and 'Level Plan'" + (" (and 'Hybrid Plan')" if hybrid else "")
          + ". Fill only the light-blue cells. Row 1 holds the headings and January is row 2, "
          "exactly as in the app, so a formula like =E2/RATE or =MAX(0,C2+E2-D2-B2) is identical "
          "in Excel and in the app.", None),
-        ("3. Use the NAMES LABOR, HIRE, LAYOFF, HIREHR, LAYOFFHR, HOLD, BACKORDER, OVERTIME, "
+        ("4. Use the NAMES LABOR, HIRE, LAYOFF, HIREHR, LAYOFFHR, HOLD, BACKORDER, OVERTIME, "
          "SUBCONTRACT, RATE, BEGIN, SAFETY, MAXINV, SHIFT, START in formulas (listed on the "
          "Scenario sheet). The 'Column Guide' sheet shows units and how each column is calculated.",
          None),
-        ("4. Save the file as .xlsx (Excel Workbook). Do NOT rename sheets, columns or move "
+        ("5. Save the file as .xlsx (Excel Workbook). Do NOT rename sheets, columns or move "
          "rows, and keep the '_meta' sheet.", None),
-        ("5. Upload the saved file in the app (Excel import). The app lists what it found and "
+        ("6. Upload the saved file in the app (Excel import). The app lists what it found and "
          "marks each cell correct or not.", None),
         ("", None),
         ("UNITS AND ASSUMPTIONS", BOLD),
