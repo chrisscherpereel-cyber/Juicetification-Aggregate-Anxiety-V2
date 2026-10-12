@@ -227,6 +227,35 @@ with st.sidebar:
     for n in scn.notices:
         st.warning("Configuration note: " + n)
     rec_slot = st.empty()
+    if CFG.get("allow_reset", True):
+        with st.expander("↻ Start over with a new scenario"):
+            if not SS.get("_reset_armed"):
+                st.caption("Clears everything you have done and gives you a brand-new scenario "
+                           "with different numbers. Your name and course section are kept.")
+                st.download_button(
+                    "⬇ Download a copy of my work first",
+                    persist.recovery_bytes(persist.make_snapshot(pg, scn, identity.mode)),
+                    file_name=f"aggregate_anxiety_before_restart_{scn.base_seed}.json",
+                    mime="application/json", key="dl_pre_reset", **C.STRETCH)
+                if st.button("Start over…", key="reset_arm", **C.STRETCH):
+                    SS["_reset_armed"] = True
+                    st.rerun()
+            else:
+                st.warning(
+                    "**Are you sure?**\n\n"
+                    "This deletes your worksheets, answers, reflections and hybrid attempts, "
+                    "and gives you a different scenario. **It cannot be undone** — the only "
+                    "copy would be a recovery file you downloaded first."
+                    + ("\n\nA report you have already downloaded and submitted still counts; "
+                       "starting over creates a new attempt with a new attempt ID."
+                       if (pg.get("report") or {}).get("final_generated") else ""))
+                rc1, rc2 = st.columns(2)
+                if rc1.button("Yes, start over", key="reset_go", type="primary", **C.STRETCH):
+                    C.reset_simulation(ctx)
+                    st.rerun()
+                if rc2.button("Cancel", key="reset_cancel", **C.STRETCH):
+                    SS["_reset_armed"] = False
+                    st.rerun()
 
 # --------------------------------------------------------------------------- #
 # 5. Main page
