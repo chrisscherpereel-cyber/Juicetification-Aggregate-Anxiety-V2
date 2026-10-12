@@ -79,3 +79,30 @@ Single 2,579-line file mixing engine, UI, persistence, text. README says "V1" an
 3. Workflow UI, Excel I/O (C).
 4. Hybrid rebuild + advanced options (B, optional features).
 5. PDF completion report and submission record (E5/E6 replaced).
+
+## Post-3.0 evaluation (2026-10-12)
+
+Reviewing the finished app specifically as a vehicle for learning aggregate planning **in
+Excel** turned up two further problems, both now fixed.
+
+| # | Finding | Status | Impact | Pri |
+|---|---------|--------|--------|-----|
+| G1 | The evaluator accepted only single-column ranges, so `=SUM(L2:P2)` — the ordinary Excel way to total a row of costs, and exactly what the workbook's own Column Guide describes — was marked wrong. Verified end to end: a workbook built with proper formulas failed 12 cells, while one of 180 hardcoded numbers passed. | Confirmed, fixed | Punished the better spreadsheet practice | P1 |
+| G2 | Nothing recorded what the student typed. Grading compares values, so a hand-calculated plan was indistinguishable from a linked model — and the PDF appendix was generated from the engine's reference plan, not the student's entries, so an instructor could not tell them apart either. | Confirmed, fixed | Spreadsheet skill unassessable | P2 |
+
+G1 was mitigated in practice for Excel submissions, because a file saved by real Excel carries
+cached values and the importer falls back to them; the in-app path had no such fallback and
+failed outright. Ranges now work down a column, across a row and over a block, and an
+out-of-worksheet corner reports `REF` ("P99 isn't in the worksheet") rather than a size
+complaint.
+
+Still open from that evaluation, as deliberate scope choices rather than defects:
+
+* `IF` and comparisons are unsupported; `MAX(0, …)` is the taught substitute.
+* No Excel **Solver** exercise. The LP exists (`aggplan/benchmark.py`) but runs in Python, so
+  students never build or see it in Excel — the largest remaining gap for a course that
+  teaches aggregate planning through Solver.
+* No chart, Data Table or Scenario Manager in the workbook; sensitivity is an in-app slider.
+* Formulas are still not *required* anywhere — `worksheet.authoring_stats` now measures them,
+  but nothing enforces them.
+

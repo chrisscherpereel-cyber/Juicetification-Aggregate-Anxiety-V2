@@ -145,7 +145,7 @@ def test_long_unbroken_word_stays_inside_page():
 def test_appendix_rows_present_for_both_plans(final_pdf):
     land = landscape_texts(final_pdf)
     assert len(land) >= 3
-    for tag in ("Appendix A", "Appendix B", "Appendix C"):
+    for tag in ("Appendix A", "Appendix B", "Appendix E"):   # completed worksheets + hybrid
         t = [x for x in land if tag in x][0]
         for m in MONTHS:
             assert m in t
@@ -158,16 +158,22 @@ def test_appendix_header_repeats_when_table_splits(monkeypatch, final_snap):
     assert len(land) >= 6                                # every table needs at least two pages
     assert all(len(t) > 200 for t in land)               # no blank landscape pages
     assert sum("TotalMonthlyCost" in nows(t) for t in land) >= 6
+    # Each appendix table has its own header signature: the completed worksheets end in
+    # Total Monthly Cost, the "as typed" tables are split into quantities (… Backord) and
+    # costs (… Total$). Note "May" is its own 3-letter abbreviation, so a month name alone
+    # does not tell the two table kinds apart.
+    SIGS = ("TotalMonthlyCost", "Total$", "BegInv")
     for t in land:
         if any(m in t for m in MONTHS):
-            assert "TotalMonthlyCost" in nows(t)         # header row repeated on every page
+            n = nows(t)
+            assert any(sig in n for sig in SIGS), t[:120]   # header row repeated on this page
 
 
 def test_appendix_tables_have_repeat_rows(final_snap):
     from reportlab.platypus import Table
     rp._ensure()
     tables = [f for f in rp._appendix_flowables(final_snap, 720) if isinstance(f, Table)]
-    assert len(tables) == 3
+    assert len(tables) == 7          # A, B monthly + C, D entries (quantities+costs) + E hybrid
     assert all(t.repeatRows == 1 for t in tables)
 
 
@@ -362,7 +368,7 @@ def test_activity_status_has_text_labels():
 
 
 def test_usage_table_is_neutral(final_pdf):
-    sect = squash(_section(full_text(final_pdf), "7. Attempts and help usage", "8. Report integrity")).lower()
+    sect = squash(_section(full_text(final_pdf), "7. Attempts and help usage", "8. How the worksheets")).lower()
     for word in ("too many", "excessive", "good", "bad", "penal", "relied", "only"):
         assert word not in sect
     assert "checks run" in sect and "scenario replacements" in sect and "worked solution opened" in sect

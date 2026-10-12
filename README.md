@@ -140,6 +140,24 @@ streamlit run app.py
 
 Development / tests: `pip install -r requirements-dev.txt && python -m pytest tests -q`.
 
+## What the report records about *how* the work was built
+
+Checking compares calculated values, so a plan entered as 180 typed numbers passes exactly
+like one built from linked formulas. That is deliberate — the arithmetic is the learning — but
+it means spreadsheet craft is invisible unless it is recorded, so the report captures it:
+
+* **Section 8, "How the worksheets were built"** — cells filled, how many hold a formula
+  versus a typed number, the share built with formulas, how many refer to other cells, and
+  which named scenario values (`LABOR`, `RATE`, …) were used. Presented neutrally: it
+  describes the method, not its correctness, and is not a mark.
+* **Appendices C and D** — every entry **exactly as the student typed it**, formulas and all,
+  split into quantities and costs so the formulas stay readable. Nothing is parsed,
+  reformatted or evaluated on the way in.
+
+This lets an instructor see who modelled and who hand-calculated, and lets a student see their
+own habits. If you want to *require* formulas, the counts in `worksheet.authoring_stats` make
+that a short step.
+
 ## Running a class of ~30 on Streamlit Community Cloud
 
 Every session shares **one Python process and roughly one core** there, so what matters is how
@@ -271,6 +289,8 @@ Calculation functions take the scenario explicitly — no global `FORECAST` is s
 The formula evaluator supports `+ - * / ^`, parentheses, cell references, brief-data names and
 `MAX MIN SUM ROUNDUP ROUNDDOWN ROUND ABS`, and reports missing references, circular references,
 unsupported syntax and division by zero by cell, with limits on length, nesting and work.
+Ranges work in all three Excel shapes — down a column (`E2:E13`), across a row (`SUM(L2:P2)`,
+the usual way to total a row of costs) and over a block (`L2:P4`).
 
 ## Verification (what was and was not checked)
 

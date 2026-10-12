@@ -27,6 +27,7 @@ MAX_DEPTH = 12
 MAX_NODES_PER_CELL = 400
 MAX_NODES_PER_GRID = 40000
 MAX_ABS = 1e12
+MAX_RANGE_CELLS = 60
 
 FUNCTIONS = {"MAX", "MIN", "SUM", "ROUNDUP", "ROUNDDOWN", "ROUND", "ABS"}
 _ONE_ARG = {"ABS"}
@@ -259,6 +260,14 @@ class GridResult:
         return e.message if e else ""
 
 
+def column_index(letter: str) -> int:
+    """'A' -> 0, 'B' -> 1, ... (inverse of column_letter for the A1-style refs we accept)."""
+    n = 0
+    for ch in str(letter).upper():
+        n = n * 26 + (ord(ch) - 64)
+    return n - 1
+
+
 def column_letter(idx: int) -> str:
     return chr(ord("A") + idx)
 
@@ -305,6 +314,15 @@ def evaluate_grid(df: pd.DataFrame, constants: Dict[str, float],
             raise FormulaError("LIMIT", "The result is too large (or not a number) — "
                                "check the formula for a mistake.")
         return x
+
+    def bounds(col_letter, rown):
+        """Raise REF if a reference is outside the worksheet (no evaluation)."""
+        cname = letters.get(col_letter)
+        if cname is None or (rown - row_base) < 0 or (rown - row_base) >= nrows:
+            raise FormulaError("REF", f"{col_letter}{rown} isn't in the worksheet (columns "
+                               f"A–{last_letter}, rows {row_base}–{row_base + nrows - 1}"
+                               + (", row 1 holds the headings)." if row_base > 1 else ")."))
+        return cname
 
     def lookup(col_letter, rown, here):
         cname = letters.get(col_letter)
@@ -371,18 +389,24 @@ def evaluate_grid(df: pd.DataFrame, constants: Dict[str, float],
         raise FormulaError("SYNTAX", "Unrecognized formula element.")
 
     def expand(arg, here, cn):
+        """A range may run DOWN a column (E2:E13), ACROSS a row (L2:P2 — the usual way to
+        total a row of costs) or over a block (L2:P4), exactly as in Excel."""
         if arg[0] != "range":
             return [ev(arg, here, cn)]
         (_, c1, r1), (_, c2, r2) = arg[1], arg[2]
-        if c1 != c2:
-            raise FormulaError("SYNTAX", "Ranges must stay in one column, e.g. E1:E3.")
+        # Check the corners first: "P99 isn't in the worksheet" tells a student far more
+        # than a size complaint when they simply selected too many rows.
+        for cl, rn in ((c1, r1), (c2, r2)):
+            bounds(cl, rn)
+        i1, i2 = sorted((column_index(c1), column_index(c2)))
         lo, hi = sorted((r1, r2))
-        if hi - lo > 50:
-            raise FormulaError("LIMIT", "Range is too long.")
+        if (i2 - i1 + 1) * (hi - lo + 1) > MAX_RANGE_CELLS:
+            raise FormulaError("LIMIT", f"That range covers more than {MAX_RANGE_CELLS} cells.")
         out = []
-        for rr in range(lo, hi + 1):
-            tick(cn)
-            out.append(lookup(c1, rr, here)[0])
+        for ci in range(i1, i2 + 1):
+            for rr in range(lo, hi + 1):
+                tick(cn)
+                out.append(lookup(column_letter(ci), rr, here)[0])
         return out
 
     def call(name, args, here, cn):
