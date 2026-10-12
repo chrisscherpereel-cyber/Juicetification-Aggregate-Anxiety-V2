@@ -335,6 +335,30 @@ def next_stage(pg: dict, scn_hash: str, current: str) -> Optional[str]:
     return None
 
 
+def prev_stage(pg: dict, scn_hash: str, current: str) -> Optional[str]:
+    """The stage BACK leads to. It mirrors next_stage: a student who was sent past the
+    optional stages should not be sent back into one they deliberately skipped, so Back
+    prefers a required stage or one they have actually touched."""
+    statuses = all_status(pg, scn_hash)
+    i = STAGE_KEYS.index(current)
+    for k in reversed(STAGE_KEYS[:i]):
+        if STAGE_BY_KEY[k].required or statuses[k].state != "optional":
+            return k
+    return STAGE_KEYS[0] if i > 0 else None
+
+
+def group_progress(pg: dict, scn_hash: str):
+    """[(group key, label, done, total, contains_current?)] for the stepper."""
+    statuses = all_status(pg, scn_hash)
+    out = []
+    for gkey, glabel in GROUPS:
+        stg = stages_in(gkey)
+        req = [s for s in stg if s.required] or stg
+        done = sum(1 for s in req if statuses[s.key].done)
+        out.append((gkey, glabel, done, len(req)))
+    return out
+
+
 def group_of(key: str) -> str:
     return STAGE_BY_KEY[key].group
 

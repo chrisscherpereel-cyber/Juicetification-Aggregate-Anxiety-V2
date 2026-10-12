@@ -11,13 +11,33 @@ from aggplan import text as T
 from aggplan import workflow as W
 from aggplan.scenario import PRESET_LABELS, PRESET_LEARNING
 
-from .common import (Ctx, SS, STRETCH, feedback, p_multiselect, p_number, p_radio, record_check,
+from .common import (Ctx, SS, STRETCH, feedback, go_to, p_multiselect, p_number, p_radio, record_check,
                      shuffled)
 
 
 def demand_table(ctx: Ctx) -> pd.DataFrame:
     return pd.DataFrame({"Month": list(ctx.scn.months),
                          "Forecast demand (bottles)": [f"{d:,.0f}" for d in ctx.scn.demand]})
+
+
+def resume(ctx: Ctx) -> None:
+    """A returning student lands on the brief. Rather than making them work out where they
+    stopped, offer the first unfinished required stage in one click."""
+    done = sum(1 for r in W.requirement_list(ctx.pg, ctx.h) if r["required"] and r["complete"])
+    total = sum(1 for r in W.requirement_list(ctx.pg, ctx.h) if r["required"])
+    if not done:
+        return                                   # nothing to resume yet
+    nxt = W.next_stage(ctx.pg, ctx.h, "brief")
+    with st.container(border=True):
+        if done >= total:
+            st.markdown(f"**Welcome back — all {total} required activities are complete.**")
+            st.button("Go to Download your PDF report →", key="resume_btn", type="primary",
+                      on_click=go_to, args=("submit",))
+        elif nxt:
+            st.markdown(f"**Welcome back.** You have finished **{done} of {total}** required "
+                        f"activities. Next up: **{W.STAGE_BY_KEY[nxt].title}**.")
+            st.button(f"Continue where I left off: {W.STAGE_BY_KEY[nxt].title} →",
+                      key="resume_btn", type="primary", on_click=go_to, args=(nxt,))
 
 
 def brief_tables(ctx: Ctx, where=st, height: int = 250) -> None:
@@ -54,6 +74,7 @@ def render_brief(ctx: Ctx) -> None:
     s = ctx.scn
     ctx.pg.setdefault("visited", {})["brief"] = True
     st.title("Juicetification: Aggregate Anxiety")
+    resume(ctx)
     st.write(
         "You are the **operations planning analyst** for Juicetification Inc., a small juice "
         "bottler. You bottle one aggregate product family — 16-oz bottled juice — and must build "

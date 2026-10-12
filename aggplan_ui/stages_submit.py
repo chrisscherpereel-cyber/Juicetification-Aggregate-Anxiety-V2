@@ -103,6 +103,14 @@ def render_submit(ctx: Ctx) -> None:
     rep = pg.setdefault("report", {})
     st.write("Your report is a PDF built from your verified work. **Download your report, review it, "
              "and upload the PDF to your LMS assignment.**")
+    # These live here, not in the sidebar: they are needed only to name the report, and in the
+    # sidebar they pushed the navigation below the fold on a 768px-tall laptop.
+    st.subheader("Your details")
+    st.caption("These name your report and appear on its first page.")
+    d1, d2 = st.columns(2)
+    pg["student_name"] = d1.text_input("Student name", pg.get("student_name", ""), key="in_name")
+    pg["section"] = d2.text_input("Course section", pg.get("section", ""), key="in_section",
+                                  help="Type N/A if your course has no sections.")
     reqs = W.requirement_list(pg, ctx.h)
     rows = []
     for r in reqs:

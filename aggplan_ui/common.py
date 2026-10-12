@@ -161,6 +161,35 @@ def feedback(kind: str, text: str) -> None:
 # --------------------------------------------------------------------------- #
 # Task card and footer navigation
 # --------------------------------------------------------------------------- #
+GROUP_SHORT = {"understand": "Understand", "prepare": "Prepare", "build": "Build",
+               "compare": "Compare", "submit": "Submit"}
+
+
+def group_entry(ctx: Ctx, gkey: str) -> str:
+    """Where a click on a group should land: its first unfinished stage, else its first."""
+    stages = W.stages_in(gkey)
+    statuses = W.all_status(ctx.pg, ctx.h)
+    for s in stages:
+        if s.required and not statuses[s.key].done:
+            return s.key
+    return stages[0].key
+
+
+def stepper(ctx: Ctx) -> None:
+    """A five-step strip across the top of every stage, so a student can see where they are
+    and jump, without scrolling the sidebar at all. Each step names its own progress in
+    words; the current step is also marked with a caret, never by colour alone."""
+    here = W.group_of(ctx.stage)
+    cols = st.columns(5)
+    for col, (gkey, _label, done, total) in zip(cols, W.group_progress(ctx.pg, ctx.h)):
+        current = gkey == here
+        tick = "✓" if done >= total else f"{done}/{total}"
+        label = ("▸ " if current else "") + f"{GROUP_SHORT[gkey]}  {tick}"
+        col.button(label, key=f"step_{gkey}", on_click=go_to, args=(group_entry(ctx, gkey),),
+                   type="primary" if current else "secondary", **STRETCH,
+                   help=("You are here. " if current else "") + f"{done} of {total} done")
+
+
 def task_card(ctx: Ctx) -> None:
     stage = W.STAGE_BY_KEY[ctx.stage]
     status = W.stage_status(ctx.pg, ctx.h, ctx.stage)
@@ -183,16 +212,18 @@ def go_to(stage_key: str) -> None:
 
 
 def footer_nav(ctx: Ctx) -> None:
+    """Back and Next both NAME where they go, and Back mirrors Next: neither drops a student
+    into an optional stage they chose to skip."""
     nxt = W.next_stage(ctx.pg, ctx.h, ctx.stage)
+    prv = W.prev_stage(ctx.pg, ctx.h, ctx.stage)
     st.divider()
-    cols = st.columns([1, 1, 2])
-    i = W.STAGE_KEYS.index(ctx.stage)
-    if i > 0:
-        cols[0].button("← Back", key="nav_back", on_click=go_to, args=(W.STAGE_KEYS[i - 1],))
+    cols = st.columns([2, 2, 1])
+    if prv:
+        cols[0].button(f"← Back to {W.STAGE_BY_KEY[prv].title}", key="nav_back",
+                       on_click=go_to, args=(prv,), **STRETCH)
     if nxt:
-        title = W.STAGE_BY_KEY[nxt].title
-        cols[1].button(f"Next step: {title} →", key="nav_next", type="primary",
-                       on_click=go_to, args=(nxt,))
+        cols[1].button(f"Next: {W.STAGE_BY_KEY[nxt].title} →", key="nav_next", type="primary",
+                       on_click=go_to, args=(nxt,), **STRETCH)
 
 
 CSS = """

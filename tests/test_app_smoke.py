@@ -64,7 +64,10 @@ def test_task_card_shows_task_action_progress_and_next_step():
     at.run()
     t = texts(at)
     assert "Your task." in t and "What to do now." in t
-    assert any("Next step" in b.label for b in at.button)
+    # Back and Next both name where they go (students should never click blind)
+    labels = [b.label for b in at.button]
+    assert any(l.startswith("Next: ") and l.endswith(" →") for l in labels), labels
+    assert any(l.startswith("← Back to ") for l in labels), labels
     assert any("Check my work" == b.label for b in at.button)
     new = make_app()
     new.session_state["nav_stage"] = "chase"
