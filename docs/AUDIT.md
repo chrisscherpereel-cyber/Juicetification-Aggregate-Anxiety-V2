@@ -105,6 +105,15 @@ no Solver":
 * The workbook gained an **Excel Skills** sheet (fill-down, relative vs absolute with a
   self-checking `$` exercise, the function list, named cells, error values), conditional
   formatting with a written legend, and a demand-vs-production chart.
+
+| # | Finding | Status | Impact | Pri |
+|---|---------|--------|--------|-----|
+| G3 | Every `=SUM(...)` written into a workbook went through a helper that forces `data_type="s"` (an anti-injection guard that is right for labels and anything user-derived). The Σ totals row on the Scenario, Chase, Level and Hybrid template sheets and on every exported plan sheet was therefore stored as an **inline string**: Excel displayed the literal text `=SUM(E2:E13)` instead of a total. Proved by writing a cell both ways and reading the raw `sheet1.xml`. | Confirmed, fixed | Every student and instructor workbook showed text where a total belonged | P1 |
+
+G3 is exactly the class of defect the openpyxl-only test suite cannot catch: openpyxl reads
+the value back as `"=SUM(...)"` whichever way it was stored, so only `data_type` or the raw
+XML reveals it. Internal, known-safe formulas now use a separate `_formula()` helper; `_put()`
+and its injection guard are unchanged for anything user-derived.
 * Plan stages report the student's formula share and encourage formulas;
   `min_formula_share_pct` lets an instructor require one.
 

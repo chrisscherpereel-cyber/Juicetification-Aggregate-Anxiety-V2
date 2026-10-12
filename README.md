@@ -154,11 +154,17 @@ beginner actually types:
 * `IF(C2+E2-B2>0, C2+E2-B2, 0)` and `MAX(0, C2+E2-B2)` both work and both pass — the
   contrast between them is a teaching point, not a trap.
 
-The workbook's **Excel Skills** sheet covers fill/copy-down, relative vs. absolute
-references (with a self-checking exercise where forgetting `$` visibly breaks the answer),
-the function list, named cells, and what `#DIV/0!`, `#REF!`, `#NAME?` and `#VALUE!` mean.
-The plan sheets carry conditional formatting (shortage months, inventory over the storage
-cap) with a written legend, and a demand-vs-production chart that fills in as the student
+The workbook opens with an **Excel Skills** sheet — never imported, never graded — covering
+how a formula works, fill/copy-down, relative vs. absolute references, the function list,
+named cells, and what `#DIV/0!`, `#REF!`, `#NAME?`, `#VALUE!` and `####` mean. Its centrepiece
+is a self-checking `$` exercise: multiply a column of quantities by one rate cell and copy it
+down. The rate sits in a column with nothing beneath it, so a missing `$` slides the reference
+onto empty cells, every row after the first returns 0, and the Check column says so — the
+lesson is visible rather than described.
+
+The plan sheets carry conditional formatting (shortage months in red, inventory over the
+storage cap in amber, a cost data bar) with a **worded** legend placed right of the grid where
+the importer never looks, plus a demand-vs-production line chart that fills in as the student
 completes the production column.
 
 Each plan stage shows **how you are building this worksheet** — how many cells hold a
