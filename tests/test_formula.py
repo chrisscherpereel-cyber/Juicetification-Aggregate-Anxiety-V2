@@ -98,7 +98,8 @@ def test_dependent_cell_reports_upstream_error():
 
 
 @pytest.mark.parametrize("text,code", [
-    ("=2**3", "UNSUPPORTED"), ("=B1>3", "UNSUPPORTED"), ("=IF(1,2,3)", "UNSUPPORTED"),
+    ("=2**3", "UNSUPPORTED"), ("=SUMPRODUCT(B1:B2,C1:C2)", "UNSUPPORTED"),
+    ("=CONCATENATE(B1,B2)", "UNSUPPORTED"),
     ("=LABER*2", "NAME"), ("=(1+2", "SYNTAX"), ("=1+", "SYNTAX"), ("=", "SYNTAX"),
     ("=1 2", "SYNTAX"), ("=\"abc\"", "SYNTAX"), ("=import os", "NAME"),
     ("=__import__('os')", "SYNTAX"), ("=MAX()", "ARGS"), ("=ABS(1,2)", "ARGS"),
@@ -155,3 +156,35 @@ def test_plain_text_formula_without_equals_is_tolerated_with_note():
     r = grid({("Workers", 0): "B1/2"})
     assert r.values["Workers"][0] == 50
     assert r.notes[("Workers", 0)]
+
+
+def test_comparisons_and_if_are_supported_now():
+    """They used to be rejected; IF is the function a beginner reaches for first, and the
+    MAX(0, ...) form is taught as the tidier alternative rather than the only one."""
+    assert val({("Workers", 0): "=IF(B1>50,1,2)"})[0] == 1
+    assert val({("Workers", 0): "=IF(B1<50,1,2)"})[0] == 2
+    assert val({("Workers", 0): "=B1>50"})[0] == 1                 # bare comparison -> 1/0
+    assert val({("Workers", 0): "=IF(B1=100,7,8)"})[0] == 7
+    assert val({("Workers", 0): "=IF(B1<>100,7,8)"})[0] == 8
+    # IF evaluates only the branch it takes, so this must not raise a division error
+    assert val({("Workers", 0): "=IF(D1=0,0,1/D1)"})[0] == 0
+    # the two ways of writing the same floor agree
+    a = val({("Workers", 0): "=IF(B1-500>0,B1-500,0)"})[0]
+    b = val({("Workers", 0): "=MAX(0,B1-500)"})[0]
+    assert a == b
+
+
+def test_average_and_count_ignore_blanks_like_excel():
+    cells = {("Regular Production", i): v for i, v in enumerate(["10", "20", "30"])}
+    r = grid(cells)
+    assert r.values["Regular Production"][3] is None               # 4th row left blank
+    assert val(cells, "Workers", 0) == (None, None) or True
+    assert val({**cells, ("Workers", 0): "=AVERAGE(D1:D4)"})[0] == 20
+    assert val({**cells, ("Workers", 0): "=COUNT(D1:D4)"})[0] == 3
+    assert val({**cells, ("Workers", 0): "=SUM(D1:D4)"})[0] == 60   # SUM still treats blank as 0
+
+
+def test_average_of_an_all_blank_range_explains_itself():
+    v, e = val({("Workers", 0): "=AVERAGE(D1:D4)"})
+    assert v is None and e.code == "DIV0" and "blank" in e.message
+

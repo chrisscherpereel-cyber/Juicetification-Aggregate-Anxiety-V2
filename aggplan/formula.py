@@ -1,10 +1,14 @@
 """Safe worksheet-formula evaluator (replaces the legacy regex + eval() approach).
 
 Supported:  numbers (1500, 2.5, 1e5, 12%), cell references (E5, $E$5), ranges inside
-functions (SUM(E1:E3)), brief-data names (LABOR, RATE, …), + - * / ^, parentheses, unary
-minus, and the functions MAX MIN SUM ROUNDUP ROUNDDOWN ROUND ABS.
-Not supported (reported with a specific message): ** , comparisons, text, IF and other
-functions, references to other sheets.
+functions (SUM(E1:E3) down a column, SUM(L2:P2) across a row, L2:P4 over a block),
+brief-data names (LABOR, RATE, …), + - * / ^, parentheses, unary minus, the comparisons
+= < > <= >= <> (which yield 1 or 0), and the functions
+MAX MIN SUM AVERAGE COUNT ROUNDUP ROUNDDOWN ROUND ABS IF.
+IF only evaluates the branch it takes, so IF(B2=0,0,100/B2) is safe.
+AVERAGE and COUNT ignore blank cells, as Excel does.
+Not supported (reported with a specific message): ** , text values, other functions,
+references to other sheets.
 
 Nothing is ever passed to eval(). Limits keep a hostile or accidental expression from
 hanging a class server: expression length, token count, nesting depth, work per cell and
@@ -29,9 +33,14 @@ MAX_NODES_PER_GRID = 40000
 MAX_ABS = 1e12
 MAX_RANGE_CELLS = 60
 
-FUNCTIONS = {"MAX", "MIN", "SUM", "ROUNDUP", "ROUNDDOWN", "ROUND", "ABS"}
+FUNCTIONS = {"MAX", "MIN", "SUM", "AVERAGE", "COUNT", "ROUNDUP", "ROUNDDOWN", "ROUND", "ABS", "IF"}
+_RANGE_FNS = {"MAX", "MIN", "SUM", "AVERAGE", "COUNT"}      # accept ranges as arguments
 _ONE_ARG = {"ABS"}
 _TWO_ARG = {"ROUND", "ROUNDUP", "ROUNDDOWN"}
+# Comparisons yield 1 (true) or 0 (false); Excel shows TRUE/FALSE but the arithmetic is the
+# same, and IF(...) is where students actually use them.
+_CMP_OPS = {"=", "<", ">", "<=", ">=", "<>"}
+_EQ_TOL = 1e-9
 
 _NORMALIZE = {"×": "*", "÷": "/", "−": "-", "–": "-", "—": "-", " ": " ",
               "“": '"', "”": '"'}
@@ -84,9 +93,6 @@ def tokenize(src: str) -> List[Tuple[str, str]]:
         if kind == "pow2":
             raise FormulaError("UNSUPPORTED", "'**' isn't supported — use ^ for a power "
                                "(e.g. =E1^2).")
-        if kind == "cmp":
-            raise FormulaError("UNSUPPORTED", f"Comparison '{val}' isn't supported here — "
-                               "use MAX(0, …) or MIN(…) for floors and caps.")
         if kind == "other":
             if val.strip() == "":
                 continue
@@ -123,7 +129,7 @@ class _Parser:
     def parse(self):
         if not self.t:
             raise FormulaError("SYNTAX", "The formula is empty after '='.")
-        node = self.expr()
+        node = self.compare()
         k, v = self.peek()
         if k is not None:
             raise FormulaError("SYNTAX", f"Unexpected '{v}' — operators need a value on both "
@@ -135,6 +141,17 @@ class _Parser:
         if self.depth > MAX_DEPTH:
             raise FormulaError("LIMIT", f"Formula is nested too deeply (more than {MAX_DEPTH} "
                                "levels of parentheses/functions).")
+
+    def compare(self):
+        """Lowest precedence, as in Excel: 2+2=4 compares the sum, not 2+(2=4)."""
+        node = self.expr()
+        if self.peek()[1] in _CMP_OPS and self.peek()[0] in ("op", "cmp"):
+            op = self.take()[1]
+            if self.peek()[1] in _CMP_OPS and self.peek()[0] in ("op", "cmp"):
+                raise FormulaError("SYNTAX", f"Two comparisons in a row ('{op}' then "
+                                   f"'{self.peek()[1]}'); compare two values at a time.")
+            return ("cmp", op, node, self.expr())
+        return node
 
     def expr(self):
         node = self.term()
@@ -219,8 +236,12 @@ class _Parser:
             if name in _TWO_ARG and len(args) not in (1, 2):
                 raise FormulaError("ARGS", f"{name} needs a value and optional number of "
                                    f"decimals, got {len(args)} arguments.")
-            if name in {"MAX", "MIN", "SUM"} and not args:
+            if name in _RANGE_FNS and not args:
                 raise FormulaError("ARGS", f"{name} needs at least one value.")
+            if name == "IF" and len(args) not in (2, 3):
+                raise FormulaError("ARGS", "IF needs a test and a value, and usually a third "
+                                   "value for when the test is false — e.g. "
+                                   "IF(C2+E2-B2>0, C2+E2-B2, 0).")
             return ("fn", name, args)
         m = _CELL_RE.match(v)
         if m:
@@ -234,11 +255,11 @@ class _Parser:
         raise FormulaError("NAME", f"Unknown name '{v}'.{extra}")
 
     def arg(self):
-        """An argument: an expression, or a range A1:A3 (only meaningful in SUM/MAX/MIN)."""
-        node = self.expr()
+        """An argument: a comparison/expression, or a range A1:A3."""
+        node = self.compare()
         if self.peek()[1] == ":":
             self.take()
-            end = self.expr()
+            end = self.compare()
             if node[0] != "cell" or end[0] != "cell":
                 raise FormulaError("SYNTAX", "A range must look like E1:E3.")
             return ("range", node, end)
@@ -324,6 +345,26 @@ def evaluate_grid(df: pd.DataFrame, constants: Dict[str, float],
                                + (", row 1 holds the headings)." if row_base > 1 else ")."))
         return cname
 
+    def lookup_cell(col_letter, rown, here):
+        """(value, ref, was_blank). A blank cell reads as 0 for arithmetic, but AVERAGE and
+        COUNT need to know it was blank so they can ignore it the way Excel does."""
+        cname = bounds(col_letter, rown)
+        ref = f"{col_letter}{rown}"
+        if cname in text_cols:
+            raise FormulaError("TYPE", f"{ref} holds a month name, not a number.")
+        res = eval_cell(rown - row_base, cname)
+        if res[1] is not None:
+            if res[1].code == "CIRC":
+                if stack and stack[-1] in getattr(res[1], "cycle", ()):
+                    raise res[1]
+                raise FormulaError("DEP", f"{ref} is part of a circular reference.")
+            raise FormulaError("DEP", f"{ref} has an error ({res[1].message.rstrip('.')}) — "
+                               "fix that cell first.")
+        if res[0] is None:
+            notes.setdefault(here, []).append(f"{ref} is blank (counted as 0)")
+            return 0.0, ref, True
+        return res[0], ref, False
+
     def lookup(col_letter, rown, here):
         cname = letters.get(col_letter)
         ref = f"{col_letter}{rown}"
@@ -381,6 +422,14 @@ def evaluate_grid(df: pd.DataFrame, constants: Dict[str, float],
                     return check_num(float(x) ** y)
                 except (OverflowError, ZeroDivisionError, ValueError):
                     raise FormulaError("LIMIT", "That power is too large (or undefined).")
+        if kind == "cmp":
+            _, op, a, b = node
+            x, y = ev(a, here, cn), ev(b, here, cn)
+            tol = _EQ_TOL * max(1.0, abs(x), abs(y))
+            res = {"=": lambda: abs(x - y) <= tol, "<>": lambda: abs(x - y) > tol,
+                   "<": lambda: x < y - tol, ">": lambda: x > y + tol,
+                   "<=": lambda: x <= y + tol, ">=": lambda: x >= y - tol}[op]()
+            return 1.0 if res else 0.0
         if kind == "fn":
             return call(node[1], node[2], here, cn)
         if kind == "range":
@@ -392,7 +441,7 @@ def evaluate_grid(df: pd.DataFrame, constants: Dict[str, float],
         """A range may run DOWN a column (E2:E13), ACROSS a row (L2:P2 — the usual way to
         total a row of costs) or over a block (L2:P4), exactly as in Excel."""
         if arg[0] != "range":
-            return [ev(arg, here, cn)]
+            return [(ev(arg, here, cn), False)]
         (_, c1, r1), (_, c2, r2) = arg[1], arg[2]
         # Check the corners first: "P99 isn't in the worksheet" tells a student far more
         # than a size complaint when they simply selected too many rows.
@@ -406,12 +455,26 @@ def evaluate_grid(df: pd.DataFrame, constants: Dict[str, float],
         for ci in range(i1, i2 + 1):
             for rr in range(lo, hi + 1):
                 tick(cn)
-                out.append(lookup(column_letter(ci), rr, here)[0])
+                v, _ref, blank = lookup_cell(column_letter(ci), rr, here)
+                out.append((v, blank))
         return out
 
     def call(name, args, here, cn):
-        if name in ("MAX", "MIN", "SUM"):
-            vals = [v for a in args for v in expand(a, here, cn)]
+        if name == "IF":
+            # Only the branch actually taken is evaluated, so IF(B2=0,0,100/B2) is safe.
+            taken = args[1] if ev(args[0], here, cn) else (args[2] if len(args) > 2 else None)
+            return 0.0 if taken is None else check_num(ev(taken, here, cn))
+        if name in _RANGE_FNS:
+            pairs = [p for a in args for p in expand(a, here, cn)]
+            if name in ("AVERAGE", "COUNT"):
+                vals = [v for v, blank in pairs if not blank]    # ignore blanks, as Excel does
+                if name == "COUNT":
+                    return float(len(vals))
+                if not vals:
+                    raise FormulaError("DIV0", "AVERAGE has no numbers to average — every cell "
+                                       "in that range is blank.")
+                return check_num(sum(vals) / len(vals))
+            vals = [v for v, _ in pairs]
             return check_num({"MAX": max, "MIN": min, "SUM": sum}[name](vals))
         vals = [ev(a, here, cn) for a in args]
         if name == "ABS":

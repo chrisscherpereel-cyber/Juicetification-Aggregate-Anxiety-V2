@@ -52,6 +52,7 @@ PRESET_LEARNING = {
 NON_MODEL_PARAMS = frozenset({
     "feedback_mode", "benchmark_reveal", "allow_replacement", "assignment_name",
     "report_timezone", "autosave_seconds", "autosave_flush_seconds",
+    "min_formula_share_pct",
 })
 
 _SHAPE = [0.55, 0.60, 0.75, 1.00, 1.30, 1.55, 1.65, 1.40, 1.10, 0.85, 0.70, 0.55]

@@ -96,13 +96,22 @@ failed outright. Ranges now work down a column, across a row and over a block, a
 out-of-worksheet corner reports `REF` ("P99 isn't in the worksheet") rather than a size
 complaint.
 
-Still open from that evaluation, as deliberate scope choices rather than defects:
+Addressed afterwards, once the course objective was confirmed as "basic Excel functions,
+no Solver":
 
-* `IF` and comparisons are unsupported; `MAX(0, …)` is the taught substitute.
-* No Excel **Solver** exercise. The LP exists (`aggplan/benchmark.py`) but runs in Python, so
-  students never build or see it in Excel — the largest remaining gap for a course that
-  teaches aggregate planning through Solver.
-* No chart, Data Table or Scenario Manager in the workbook; sensitivity is an in-app slider.
-* Formulas are still not *required* anywhere — `worksheet.authoring_stats` now measures them,
-  but nothing enforces them.
+* `IF` and the comparisons `= < > <= >= <>` are supported (`IF` evaluates only the branch it
+  takes). `AVERAGE` and `COUNT` were added and ignore blanks as Excel does. `IF(…>0,…,0)`
+  and `MAX(0,…)` now both pass, which makes the contrast between them teachable.
+* The workbook gained an **Excel Skills** sheet (fill-down, relative vs absolute with a
+  self-checking `$` exercise, the function list, named cells, error values), conditional
+  formatting with a written legend, and a demand-vs-production chart.
+* Plan stages report the student's formula share and encourage formulas;
+  `min_formula_share_pct` lets an instructor require one.
+
+Still open, as deliberate scope choices rather than defects:
+* No Excel **Solver** exercise — out of scope for this version by decision; the LP still
+  lives in `aggplan/benchmark.py` and runs in Python.
+* No Data Table or Scenario Manager; sensitivity remains an in-app slider.
+* `COUNTIF` and `SUMPRODUCT` are still unsupported: `COUNTIF` needs string criteria such as
+  `">0"`, which is a much larger parser change than the rest.
 
