@@ -207,6 +207,25 @@ def task_card(ctx: Ctx) -> None:
             st.markdown("**Why this isn't complete yet:**\n" + "\n".join(f"- {r}" for r in status.reasons))
 
 
+# Session keys that mirror a widget or cache a derived artefact. A reset must drop them all,
+# or Streamlit happily re-populates the new scenario's screens with the old scenario's typed
+# values. The restore path clears the same families.
+_RESET_KEY_PREFIXES = ("w_", "in_", "chase_", "level_", "hy_", "unc_", "xl_", "cmp_", "sens_",
+                       "step_", "nav_", "dc_", "pr", "_xl_tpl_", "_xl_exp_")
+
+
+def reset_simulation(ctx: Ctx) -> None:
+    """Wipe the student's work, move to a fresh scenario, and send them to the brief."""
+    SS["pg"] = W.reset_pg(ctx.pg)
+    for k in [k for k in list(SS.keys()) if str(k).startswith(_RESET_KEY_PREFIXES)]:
+        SS.pop(k, None)
+    for k in ("_pdf", "_reset_armed", "cmp_checked", "_last_blob", "_last_milestone",
+              "chase_reveal", "level_reveal", "_bench", "hy_base", "hy_tok",
+              "chase_base", "level_base"):
+        SS.pop(k, None)
+    SS["nav_stage"] = "brief"
+
+
 def go_to(stage_key: str) -> None:
     SS["nav_stage"] = stage_key
 

@@ -44,6 +44,14 @@ progress, a **Check my work** button, and — if the stage isn't complete — **
   ✔/✖ verdicts appear only after **Check my work** (set `feedback_mode=live` for the V2 behaviour).
   Every status uses a symbol *and* a word, never color alone; tables are real HTML tables with
   captions and header cells, and everything is reachable with the keyboard.
+* **Starting over.** *↻ Start over with a new scenario* at the foot of the sidebar wipes the
+  student's work and moves them to a fresh scenario. It is deliberately two steps: the first
+  click only arms it, and the confirmation says plainly that it cannot be undone and offers a
+  recovery-file download first. Name and section survive; the new scenario is the next
+  deterministic variant (so it is reproducible, and an instructor-fixed demand curve still
+  yields a variant of that curve), and the restart is written into the scenario lineage.
+  A report already downloaded and submitted still counts — the restart becomes a new attempt.
+  Set `allow_reset=false` to remove the control.
 * Work is preserved when navigating. With server saving it also survives a refresh; without it, use
   the **recovery file** (sidebar) — a checksummed JSON download you can upload later.
 * The worksheet uses real spreadsheet addressing: **row 1 = headings, January = row 2,** columns
@@ -286,6 +294,7 @@ the Juicetification Director form, or by URL: `?cfg=<base64 json>`, `?game=<code
 | `feedback_mode` | on_check | `on_check` or `live` |
 | `benchmark_reveal` | after_submission | `after_submission` / `always` / `never` |
 | `allow_replacement` | true | allow the "I'm stuck → replacement scenario" flow |
+| `allow_reset` | true | let students restart the whole simulation on a new scenario |
 | `shelf_life_months`, `disposal_cost` | 0, 0.50 | perishability test |
 | `forecast_error_pct` | 0 | enables the forecast-error exercise |
 | `assignment_name`, `report_timezone` | …, server time | shown on the PDF (`America/Phoenix`, …) |

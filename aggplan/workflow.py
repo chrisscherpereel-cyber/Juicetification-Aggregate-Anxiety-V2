@@ -335,6 +335,26 @@ def next_stage(pg: dict, scn_hash: str, current: str) -> Optional[str]:
     return None
 
 
+def reset_pg(pg: dict) -> dict:
+    """Start the simulation over on a NEW scenario, keeping only who the student is.
+
+    The replacement scenario comes from the same deterministic variant counter the "I'm
+    stuck" flow uses, so it is reproducible and auditable rather than random — and when an
+    instructor has fixed the demand curve the student still gets a seeded variant of that
+    curve rather than a different assignment.
+
+    Name and section survive: they identify the student, they are not work. The scenario
+    lineage survives too, so an instructor can still see how many scenarios this student has
+    been through and why."""
+    variant = int(pg.get("variant", 0)) + 1
+    lineage = list(pg.get("lineage", []))
+    lineage.append({"variant": variant, "reason": "student restarted the simulation"})
+    return {"ans": {}, "checks": {}, "plans": {}, "practice": {}, "visited": {},
+            "base_seed": pg.get("base_seed"), "variant": variant, "lineage": lineage,
+            "student_name": pg.get("student_name", ""), "section": pg.get("section", ""),
+            "resets": int(pg.get("resets", 0)) + 1, "stage": "brief"}
+
+
 def prev_stage(pg: dict, scn_hash: str, current: str) -> Optional[str]:
     """The stage BACK leads to. It mirrors next_stage: a student who was sent past the
     optional stages should not be sent back into one they deliberately skipped, so Back
