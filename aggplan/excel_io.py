@@ -442,14 +442,17 @@ def _sk_lines(ws, r: int, lines: Sequence[str], font=None) -> int:
 
 
 def _sk_table(ws, r: int, headings: Sequence[str], rows: Sequence[Sequence[str]],
-              first_col: int = 1, wrap_last: bool = False) -> int:
+              first_col: int = 1, wrap: bool = False) -> int:
+    """`wrap` wraps EVERY cell of the table, not just the last column: a description column
+    with text longer than its width is clipped by whatever sits in the next column, and
+    opening the sheet in Excel showed exactly that ("how many cells in a range contain a
+    numbe"). Wrapping lets the row grow instead."""
     _heading_row(ws, r, headings, first_col=first_col)
     r += 1
     for row in rows:
         for j, v in enumerate(row):
             ref = f"{get_column_letter(first_col + j)}{r}"
-            last = j == len(row) - 1
-            _put(ws, ref, v, border=True, wrap=wrap_last and last,
+            _put(ws, ref, v, border=True, wrap=wrap,
                  font=CODE_FONT if isinstance(v, str) and v.startswith("=") else None)
         r += 1
     return r
@@ -529,7 +532,7 @@ def _skills_sheet(wb: Workbook, scn: Scenario):
          "copying ACROSS a row while always reading from row 2"],
         ["$A2", "column A is frozen, the row moves",
          "copying ACROSS while always reading the numbers in column A"],
-    ], wrap_last=True)
+    ], wrap=True)
     r = _sk_lines(ws, r, [
         "Shortcut: while typing a formula, click the reference and press F4. It cycles "
         "A2 -> $A$2 -> A$2 -> $A2 -> A2.",
@@ -595,7 +598,7 @@ def _skills_sheet(wb: Workbook, scn: Scenario):
         "Excel, but the app then has to fall back on the value Excel saved.",
     ])
     r = _sk_table(ws, r, ["Function", "What it does", "Example in this workbook"],
-                  [[n, d, e] for n, d, e in SKILL_FUNCTIONS], wrap_last=True)
+                  [[n, d, e] for n, d, e in SKILL_FUNCTIONS], wrap=True)
     r = _sk_lines(ws, r, [
         "A RANGE is two corners joined by a colon, and functions happily take one instead of a "
         "list of separate cells:",
@@ -617,7 +620,7 @@ def _skills_sheet(wb: Workbook, scn: Scenario):
         "meant.",
     ])
     r = _sk_table(ws, r, ["Shows", "What it means", "The usual fix"],
-                  [[c, m, f] for c, m, f in SKILL_ERRORS], wrap_last=True)
+                  [[c, m, f] for c, m, f in SKILL_ERRORS], wrap=True)
     r += 1
 
     # (f) named cells ------------------------------------------------------------------------
@@ -644,7 +647,7 @@ def _skills_sheet(wb: Workbook, scn: Scenario):
          "RATE is the bottles one worker can make in a month"],
         [f"=J2*{const['HOLD']:g}", "=J2*HOLD",
          "HOLD is the cost of holding one bottle for one month"],
-    ], wrap_last=True)
+    ], wrap=True)
     r = _sk_lines(ws, r, [
         "Now go to the 'Chase Plan' sheet and start with column E. The 'Column Guide' sheet tells "
         "you what belongs in every column.",
@@ -680,8 +683,14 @@ def _plan_extras(ws, scn: Scenario, title: str):
         f"{total}{first}:{total}{last}",
         DataBarRule(start_type="min", end_type="max", color="BDD7EE", showValue=True))
 
-    _put(ws, "S1", "COLOUR KEY (a hint only - never the grade)", font=HEAD_FONT, fill=HEAD_FILL)
-    ws["T1"].fill = HEAD_FILL
+    # The legend lives BELOW the twelve month rows. Opening a filled workbook in Excel showed
+    # that wrapped legend text in S/T forced those worksheet rows taller, and because rows
+    # 2-5 are also January-May the plan grid came out with uneven row heights. Anchored
+    # objects (the chart) do not affect row height, so only the text had to move.
+    key_top = last + 3
+    _put(ws, f"S{key_top}", "COLOUR KEY (a hint only - never the grade)",
+         font=HEAD_FONT, fill=HEAD_FILL)
+    ws[f"T{key_top}"].fill = HEAD_FILL
     legend = [
         (f"Red fill in column {back} (Backorders)",
          "a month with backorders above 0: orders you did not ship on time. They cost money every "
@@ -693,16 +702,18 @@ def _plan_extras(ws, scn: Scenario, title: str):
          "the longer the bar, the more expensive the month. The bars are scaled to your own "
          "twelve months, so they only compare rows inside this sheet."),
     ]
-    for k, (what, why) in enumerate(legend, start=2):
+    for k, (what, why) in enumerate(legend, start=key_top + 1):
         _put(ws, f"S{k}", what, border=True, wrap=True)
         _put(ws, f"T{k}", why, border=True, wrap=True)
-    _put(ws, "S5", "The colours appear by themselves as you type. They describe your numbers; the "
-                   "app still checks every cell when you upload.", wrap=True)
-    _put(ws, "S7", "The chart below fills in as you complete the Regular Production column "
-                   f"(E{first}:E{last}). It is empty until then, which is normal.", wrap=True)
+    _put(ws, f"S{key_top + 4}",
+         "The colours appear by themselves as you type. They describe your numbers; the "
+         "app still checks every cell when you upload.", wrap=True)
+    _put(ws, f"S{key_top + 6}",
+         "The chart above fills in as you complete the Regular Production column "
+         f"(E{first}:E{last}). It is empty until then, which is normal.", wrap=True)
     ws.column_dimensions["S"].width = 42
     ws.column_dimensions["T"].width = 62
-    for k in (2, 3, 4, 5, 7):
+    for k in range(key_top + 1, key_top + 5):
         ws.row_dimensions[k].height = 32
 
     chart = LineChart()
@@ -716,7 +727,7 @@ def _plan_extras(ws, scn: Scenario, title: str):
         chart.add_data(Reference(ws, min_col=col, min_row=1, max_row=last),
                        titles_from_data=True)
     chart.set_categories(Reference(ws, min_col=1, min_row=first, max_row=last))
-    ws.add_chart(chart, "S9")
+    ws.add_chart(chart, "S2")   # floats beside the grid; anchors never change row heights
     return chart
 
 
