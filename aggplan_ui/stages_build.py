@@ -15,6 +15,7 @@ from aggplan.engine import BINV_POLICIES, level_rate, reference_plan, summarize
 from aggplan.formula import column_letter, shift_refs
 from aggplan.scenario import resolve_scenario
 from aggplan.worksheet import (EDIT_COLS, MONEY_COLS, ROW_BASE, STATUS_LABEL, WS_COLS, Grade,
+                               authoring_stats,
                                blank_worksheet, cell_raw, col_letter, column_sums, fmt,
                                grade_worksheet, truth_worksheet, units)
 
@@ -343,16 +344,50 @@ def render_plan(ctx: Ctx, kind: str) -> None:
     stt["total_in"] = total_in
     sig = plan_signature_now(ctx, kind)
 
+    # ---------------- how the worksheet was built (encouragement, not a grade) ----
+    auth = authoring_stats(stt.get("ws"), s.named_constants())
+    min_share = float(ctx.cfg.get("min_formula_share_pct", 0) or 0)
+    formula_ok = min_share <= 0 or auth["formula_share_pct"] + 1e-9 >= min_share
+
     # ---------------- check -----------------------------------------------------
     def do_check():
         stt["n_checks"] = int(stt.get("n_checks", 0)) + 1
         total_ok = abs(total_in - truth_total) < 0.5
         stt["last"] = {"sig": sig, "n_ok": grade.n_ok, "n_wrong": grade.n_wrong,
                        "n_blank": grade.n_blank, "total_ok": total_ok, "total_entered": total_in,
-                       "status": grade.status, "display": grade.display}
-        passed = grade.complete and total_ok and cap_ok
+                       "status": grade.status, "display": grade.display,
+                       "formula_ok": formula_ok, "formula_share": auth["formula_share_pct"]}
+        passed = grade.complete and total_ok and cap_ok and formula_ok
         stt["completed"] = bool(passed)
         stt["sig"] = sig if passed else ""
+
+    with st.expander("🧮 How you are building this worksheet", expanded=False):
+        f, lit, filled = auth["formula_cells"], auth["literal_cells"], auth["filled_cells"]
+        if not filled:
+            st.markdown("**Nothing entered yet.** You can type numbers, but a formula such as "
+                        f"`=F{ROW_BASE}*LABOR` or `=MAX(0,C{ROW_BASE}+E{ROW_BASE}-B{ROW_BASE})` "
+                        "recalculates itself when an input changes — that is the habit the Excel "
+                        "part of this assignment is for.")
+        else:
+            st.markdown(f"**{f} of {filled} filled cells use a formula** "
+                        f"({auth['formula_share_pct']:.0f}%); {lit} hold a typed number.")
+        if auth["named_constants_used"]:
+            st.caption("Scenario values used by name: "
+                       + ", ".join("`%s`" % n for n in auth["named_constants_used"]))
+        if min_share > 0:
+            (feedback("ok", f"At least {min_share:g}% of your cells use a formula, as required.")
+             if formula_ok else
+             feedback("warn", f"Your instructor asks that at least **{min_share:g}%** of the "
+                      "cells use a formula. Replace some typed numbers with formulas that "
+                      "reference other cells — then press **Check my work**."))
+        elif filled and f == 0:
+            st.info("ℹ️ Every value here is typed in. Nothing is wrong with that, but a formula "
+                    f"like `=F{ROW_BASE}*LABOR` updates itself when something changes, and it is "
+                    "the habit the Excel part of this assignment is for. Try one column.")
+        elif f:
+            st.caption("Formulas recalculate when an input changes — typed numbers do not.")
+        st.caption("This describes how you built the worksheet, not whether it is right. "
+                   "It is not a grade.")
 
     bc1, bc2 = st.columns([1, 3])
     if bc1.button("Check my work", key=f"chk_{kind}", type="primary"):
@@ -423,6 +458,10 @@ def render_plan(ctx: Ctx, kind: str) -> None:
             st.info(f"🔮 Prediction check: the larger of the two was **{actual}** (hiring+layoff "
                     f"{moneym(hf)} vs holding {moneym(hold)}) — "
                     + ("matches" if pred == actual else "differs from") + " your prediction.")
+    elif (not done) and grade.complete and not formula_ok and (fresh or ctx.live):
+        feedback("warn", f"Every cell is correct, but only {auth['formula_share_pct']:.0f}% of "
+                 f"them use a formula and your instructor asks for {min_share:g}%. "
+                 "Rebuild some columns with formulas to finish.")
     elif stt.get("completed") and stt.get("sig") != sig:
         feedback("warn", "This plan was verified earlier, but you changed it since. Press "
                  "**Check my work** to re-verify.")

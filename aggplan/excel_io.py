@@ -34,7 +34,9 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 import pandas as pd
 from openpyxl import Workbook, load_workbook
+from openpyxl.chart import LineChart, Reference
 from openpyxl.comments import Comment
+from openpyxl.formatting.rule import CellIsRule, DataBarRule
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Protection, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.workbook.defined_name import DefinedName
@@ -52,7 +54,56 @@ MAX_COLS = 60                             # ... or right of this column
 
 SHEET_README, SHEET_SCENARIO, SHEET_GUIDE = "Read Me", "Scenario", "Column Guide"
 SHEET_COMPARE, SHEET_META = "Compare", "_meta"
+SHEET_SKILLS = "Excel Skills"          # teaching only: never imported, never graded, never in _meta
 PLAN_SHEETS = {"chase": "Chase Plan", "level": "Level Plan", "hybrid": "Hybrid Plan"}
+
+# The hands-on $-reference exercise on the Excel Skills sheet (literal, scenario-independent).
+SKILLS_RATE = 0.25                                             # one fixed cell: $/bottle/month
+SKILLS_QUANTITIES = [1200.0, 850.0, 1500.0, 2300.0, 975.0, 1840.0]
+SKILLS_MONTHS = ["January", "February", "March", "April", "May", "June"]
+SKILLS_TOLERANCE = 0.001
+
+# Basic functions taught on the Excel Skills sheet and accepted by the in-app checker.
+# (AVERAGE, COUNT and IF are part of the checker's basic-function set.)
+SKILL_FUNCTIONS = [
+    ("SUM", "adds up everything in a range or list of cells",
+     "=SUM(E2:E13)  -  all the bottles you produce in the twelve months"),
+    ("MAX", "the largest of the values you give it",
+     "=MAX(0,C2+E2-D2-B2)  -  ending inventory, but never below 0"),
+    ("MIN", "the smallest of the values you give it",
+     "=MIN(B2,C2+E2)  -  ship no more than demand, and no more than you have"),
+    ("ROUND", "rounds to the number of decimals you ask for",
+     "=ROUND(G2,2)  -  paid labor hours/day shown to 2 decimals"),
+    ("ROUNDUP", "always rounds AWAY from zero (up)",
+     "=ROUNDUP(E2/RATE,0)  -  workers needed: 10.2 workers means you must hire 11"),
+    ("ROUNDDOWN", "always rounds TOWARDS zero (down)",
+     "=ROUNDDOWN(E2/RATE,0)  -  workers if you refuse to pay for a part-used worker"),
+    ("ABS", "the size of a number with the minus sign removed",
+     "=ABS(F3-F2)  -  how much the workforce changed, whether up or down"),
+    ("AVERAGE", "the mean of a range (the sum divided by how many numbers)",
+     "=AVERAGE(B2:B13)  -  average monthly demand, a good first guess for a level plan"),
+    ("COUNT", "how many cells in a range contain a number",
+     "=COUNT(E2:E13)  -  how many months of Regular Production you have filled in"),
+    ("IF", "picks one of two results depending on a test",
+     "=IF(F3>F2,F3-F2,0)  -  hires: the increase in workers, otherwise 0"),
+]
+
+SKILL_ERRORS = [
+    ("#DIV/0!", "you divided by zero, or by a cell that is still empty",
+     "look at what is on the right of the / sign - it is probably blank. Fill it in, or wrap the "
+     "division in =IF(...=0,0,...)."),
+    ("#REF!", "the formula points at a cell that no longer exists",
+     "you deleted a row, column or sheet the formula needed. Press Ctrl+Z to undo, then retype "
+     "the reference."),
+    ("#NAME?", "Excel does not recognise a word in the formula",
+     "a spelling mistake: ROUNUP instead of ROUNDUP, or LABR instead of LABOR. Check the spelling "
+     "against the lists on this sheet."),
+    ("#VALUE!", "text where a number was expected",
+     "one of the cells in the formula holds words or a stray space. Clear it, or put a number in it."),
+    ("####", "not an error at all: the column is too narrow to show the number",
+     "widen the column (double-click the line between the two column letters) and the number "
+     "appears."),
+]
 
 HYBRID_IN_COLS = ["Month", "Forecast Demand", "Workers", "Regular Production",
                   "Overtime Production", "Subcontract Production"]
@@ -86,6 +137,15 @@ THIN = Side(style="thin", color="BFBFBF")
 BOX = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
 WRAP = Alignment(wrap_text=True, vertical="top")
 
+SUB_FILL = PatternFill("solid", fgColor="D9E2F3")         # sub-heading inside a teaching sheet
+CODE_FONT = Font(name="Consolas", color="1F3864")
+NOTE_FONT = Font(italic=True, color="595959")
+# conditional-formatting palette (also described in words in the legend)
+CF_RED_FILL = PatternFill("solid", bgColor="FFC7CE")
+CF_RED_FONT = Font(color="9C0006")
+CF_AMBER_FILL = PatternFill("solid", bgColor="FFEB9C")
+CF_AMBER_FONT = Font(color="9C6500")
+
 UNLOCKED = Protection(locked=False)
 FMT_BOTTLES, FMT_MONEY, FMT_WORKERS = "#,##0", "$#,##0.00", "0.00#"
 _WORKER_COLS = {"Workers", "Paid Labor Hours/Day", "Hires", "Layoffs"}
@@ -116,6 +176,24 @@ def _put(ws, ref: str, value, *, font=None, fill=None, fmt=None, wrap=False, bor
         c.number_format = fmt
     if wrap:
         c.alignment = WRAP
+    if border:
+        c.border = BOX
+    return c
+
+
+def _formula(ws, ref: str, f: str, *, font=None, fill=None, fmt=None, border=False):
+    """Write a REAL Excel formula (never student text, so no injection concern).
+
+    `_put` deliberately stores every string as text, which is right for labels and for anything
+    derived from user input but would turn '=SUM(...)' into a literal string in the grid."""
+    c = ws[ref]
+    c.value = f                       # openpyxl binds a leading '=' to data_type 'f'
+    if font is not None:
+        c.font = font
+    if fill is not None:
+        c.fill = fill
+    if fmt:
+        c.number_format = fmt
     if border:
         c.border = BOX
     return c
@@ -207,7 +285,7 @@ def _build_scenario_sheet(wb: Workbook, scn: Scenario):
         _put(ws, f"C{r}", "bottles")
     last = 6 + len(scn.months)
     _put(ws, f"A{last}", "Total demand", font=BOLD, fill=TOTAL_FILL)
-    _put(ws, f"B{last}", f"=SUM(B6:B{last - 1})", font=BOLD, fill=TOTAL_FILL, fmt=FMT_BOTTLES)
+    _formula(ws, f"B{last}", f"=SUM(B6:B{last - 1})", font=BOLD, fill=TOTAL_FILL, fmt=FMT_BOTTLES)
     _put(ws, f"C{last}", "bottles")
 
     r0 = last + 3
@@ -276,8 +354,8 @@ def _plan_sheet(wb: Workbook, title: str, scn: Scenario, whole: bool):
     ws[f"B{tr}"].fill = TOTAL_FILL
     for name in worksheet.SUM_COLS:
         L = worksheet.col_letter(name)
-        _put(ws, f"{L}{tr}", f"=SUM({L}{worksheet.ROW_BASE}:{L}{tr - 1})", font=BOLD,
-             fill=TOTAL_FILL, fmt=_col_fmt(name))
+        _formula(ws, f"{L}{tr}", f"=SUM({L}{worksheet.ROW_BASE}:{L}{tr - 1})", font=BOLD,
+                 fill=TOTAL_FILL, fmt=_col_fmt(name))
     ws.freeze_panes = "C2"
     _protect(ws)
     return ws
@@ -310,8 +388,8 @@ def _hybrid_sheet(wb: Workbook, scn: Scenario, whole: bool):
         if j >= 3 and name not in ("Beginning Inventory", "Beginning Backlog", "Ending Inventory",
                                    "Backorders", "Workers"):
             L = get_column_letter(j + 1)
-            _put(ws, f"{L}{tr}", f"=SUM({L}2:{L}{tr - 1})", font=BOLD, fill=TOTAL_FILL,
-                 fmt=_col_fmt(name))
+            _formula(ws, f"{L}{tr}", f"=SUM({L}2:{L}{tr - 1})", font=BOLD, fill=TOTAL_FILL,
+                     fmt=_col_fmt(name))
     ws.freeze_panes = "C2"
     # Limits block (columns W+), read-only reminders of the plan requirements.
     p = scn.params
@@ -339,6 +417,307 @@ def _hybrid_sheet(wb: Workbook, scn: Scenario, whole: bool):
     ws.column_dimensions["W"].width = 34
     _protect(ws)
     return ws
+
+
+# -----------------------------------------------------------------------------------------
+# "Excel Skills": teaching material + a self-checking exercise.
+# NEVER imported, never graded, never listed in '_meta' as a plan sheet.
+# -----------------------------------------------------------------------------------------
+def _sk_banner(ws, r: int, title: str, ncols: int = 8) -> int:
+    for j in range(ncols):
+        c = ws.cell(row=r, column=j + 1)
+        c.fill, c.font = HEAD_FILL, HEAD_FONT
+    _put(ws, f"A{r}", title, font=HEAD_FONT, fill=HEAD_FILL)
+    ws.row_dimensions[r].height = 20
+    return r + 2
+
+
+def _sk_lines(ws, r: int, lines: Sequence[str], font=None) -> int:
+    """One short sentence per row in column A (left unwrapped so it spills and stays readable)."""
+    for ln in lines:
+        if ln:
+            _put(ws, f"A{r}", ln, font=font)
+        r += 1
+    return r
+
+
+def _sk_table(ws, r: int, headings: Sequence[str], rows: Sequence[Sequence[str]],
+              first_col: int = 1, wrap_last: bool = False) -> int:
+    _heading_row(ws, r, headings, first_col=first_col)
+    r += 1
+    for row in rows:
+        for j, v in enumerate(row):
+            ref = f"{get_column_letter(first_col + j)}{r}"
+            last = j == len(row) - 1
+            _put(ws, ref, v, border=True, wrap=wrap_last and last,
+                 font=CODE_FONT if isinstance(v, str) and v.startswith("=") else None)
+        r += 1
+    return r
+
+
+def _skills_sheet(wb: Workbook, scn: Scenario):
+    ws = wb.create_sheet(SHEET_SKILLS)
+    for col, w in zip("ABCDEFGHIJ", (16, 34, 60, 18, 22, 18, 20, 30, 30, 10)):
+        ws.column_dimensions[col].width = w
+
+    _put(ws, "A1", "Excel Skills: the basics you need for this workbook", font=TITLE)
+    r = _sk_lines(ws, 2, [
+        "Practice sheet. Nothing here is imported, checked or graded, so type on it as much as "
+        "you like - you cannot damage your plan.",
+        "It uses the same column letters and rows as your plan sheets: row 1 is the headings, "
+        "January is row 2 and December is row 13.",
+    ])
+    r += 1
+
+    # (a) how a formula works ---------------------------------------------------------------
+    r = _sk_banner(ws, r, "1. HOW A FORMULA WORKS")
+    r = _sk_lines(ws, r, [
+        "Every formula starts with an equals sign. Type = first, then the calculation, then press "
+        "Enter. No = means Excel just stores your text.",
+        "A formula can use plain numbers (=1200*0.25) but it is far better to point at CELLS "
+        "(=B2*C2), so the answer updates when the numbers change.",
+        "A cell reference is a column letter plus a row number: B2 means column B, row 2. "
+        "B2:B13 means every cell from B2 down to B13.",
+        "Operators:   +  add    -  subtract    *  multiply    /  divide    ^  power.",
+        "Order of work: brackets ( ) first, then ^, then * and /, then + and -. "
+        "=2+3*4 gives 14, but =(2+3)*4 gives 20.",
+        "Press Enter and the cell shows the RESULT. Click that cell again and the formula bar "
+        "along the top still shows the FORMULA.",
+        "So every cell has two faces: the value you see in the grid, and the formula behind it in "
+        "the formula bar. Always check the formula bar.",
+        "In your plan sheets, L2 (Regular Labor Cost for January) is just =F2*LABOR: "
+        "the workers in F2 times the cost of one worker.",
+    ])
+    r += 1
+
+    # (b) fill / copy down ------------------------------------------------------------------
+    r = _sk_banner(ws, r, "2. FILL / COPY DOWN: write it once, copy it to all twelve months")
+    r = _sk_lines(ws, r, [
+        "You never type the same formula twelve times. Write it ONCE in row 2 (January), then "
+        "copy it down to row 13 (December).",
+        "With the mouse: click the cell, grab the small square at its bottom-right corner (the "
+        "fill handle) and drag it down to row 13.",
+        "With the keyboard: click the cell, hold Shift and press the Down arrow until row 13 is "
+        "selected, then press Ctrl+D (Cmd+D on a Mac).",
+        "As the formula is copied DOWN, every row number inside it moves down by the same amount:",
+    ])
+    r = _sk_table(ws, r, ["Typed in J2", "becomes in J3", "becomes in J13"],
+                  [["=C2+E2-B2", "=C3+E3-B3", "=C13+E13-B13"]])
+    r = _sk_lines(ws, r, [
+        "That shifting is exactly what you want here: each row then works on its own month. "
+        "Copy across instead and the COLUMN letters shift.",
+        "Copy down, then click a middle row (say row 8) and read the formula bar to check the "
+        "references really landed where you expected.",
+    ])
+    r += 1
+
+    # (c) relative vs absolute + exercise ----------------------------------------------------
+    r = _sk_banner(ws, r, "3. RELATIVE vs ABSOLUTE REFERENCES ($) - the one idea that breaks "
+                          "most worksheets")
+    r = _sk_lines(ws, r, [
+        "Sometimes you do NOT want a reference to move. One rate, one price, one limit is used by "
+        "every row - that cell must stay put.",
+        "A dollar sign means 'freeze this part when the formula is copied'. The $ goes IN FRONT "
+        "of the part you want to hold still.",
+    ])
+    r = _sk_table(ws, r, ["Reference", "What happens when you copy it", "Use it for"], [
+        ["A2", "column AND row both move with you",
+         "row-by-row work, like every column of your monthly plan (=C2+E2-B2)"],
+        ["$A$2", "nothing moves: it is always cell A2, wherever you copy it",
+         "one single cell used by every row: a rate, a price, a limit"],
+        ["A$2", "the column moves, row 2 is frozen",
+         "copying ACROSS a row while always reading from row 2"],
+        ["$A2", "column A is frozen, the row moves",
+         "copying ACROSS while always reading the numbers in column A"],
+    ], wrap_last=True)
+    r = _sk_lines(ws, r, [
+        "Shortcut: while typing a formula, click the reference and press F4. It cycles "
+        "A2 -> $A$2 -> A$2 -> $A2 -> A2.",
+    ])
+    r += 1
+
+    # ---- the exercise ----------------------------------------------------------------------
+    _put(ws, f"A{r}", "EXERCISE (do this one - it takes two minutes)", font=BOLD, fill=SUB_FILL)
+    for j in range(2, 9):
+        ws.cell(row=r, column=j).fill = SUB_FILL
+    r += 1
+    head = r + 5                                   # heading row of the exercise table
+    first = head + 1                               # first data row
+    last = head + len(SKILLS_QUANTITIES)
+    rate_ref = f"$J${head}"
+    r = _sk_lines(ws, r, [
+        f"Below are six months of leftover inventory, and ONE cell (J{head}, to the right of the "
+        f"table) holding the holding cost per bottle.",
+        f"1. Click F{first} and write a formula that multiplies the bottles in E{first} by the "
+        f"holding cost in J{head}. Freeze that one cell with $ signs.",
+        f"2. Copy F{first} down to F{last} (fill handle, or select F{first}:F{last} and press "
+        f"Ctrl+D).",
+        f"3. Column G already holds the right answers and column H checks you automatically. "
+        f"All six rows should say OK.",
+        f"If you leave the $ signs out, the copied formula slides off J{head} onto the empty "
+        f"cells below it: your costs collapse to 0 and the Check column says 'Not yet' from the "
+        f"second row down.",
+    ])
+    assert r == head, (r, head)
+    _sk_table(ws, head, ["Month", "Bottles in store", "Your Cost ($)", "Correct answer ($)",
+                         "Check"], [], first_col=4)
+    for i, q in enumerate(SKILLS_QUANTITIES):
+        rr = first + i
+        _put(ws, f"D{rr}", SKILLS_MONTHS[i], border=True)
+        _put(ws, f"E{rr}", float(q), font=GIVEN_FONT, fill=GIVEN_FILL, fmt=FMT_BOTTLES, border=True)
+        c = ws[f"F{rr}"]                            # the student's cell: empty and UNLOCKED
+        c.fill, c.border, c.number_format = INPUT_FILL, BOX, FMT_MONEY
+        c.protection = UNLOCKED
+        _put(ws, f"G{rr}", round(float(q) * SKILLS_RATE, 6), fmt=FMT_MONEY, border=True)
+        _formula(ws, f"H{rr}",
+                 f'=IF(F{rr}="","(nothing typed yet)",'
+                 f'IF(ABS(F{rr}-G{rr})<{SKILLS_TOLERANCE},"OK","Not yet - check the $ signs"))',
+                 border=True)
+    _put(ws, f"I{head - 1}", "THE ONE FIXED CELL", font=BOLD, fill=SUB_FILL)
+    ws.cell(row=head - 1, column=10).fill = SUB_FILL
+    _put(ws, f"I{head}", "Holding cost per bottle ($)", border=True)
+    _put(ws, f"J{head}", SKILLS_RATE, font=GIVEN_FONT, fill=GIVEN_FILL, fmt="0.00", border=True)
+    r = last + 2
+    r = _sk_lines(ws, r, [
+        f"The answer: =E{first}*{rate_ref}   (and after copying, F{first + 1} reads "
+        f"=E{first + 1}*{rate_ref} - the E moved, the J did not).",
+        "Same idea on your plan sheets: Holding Cost (column O) is Ending Inventory times one "
+        "fixed cost. There you can use the NAME HOLD instead (section 6).",
+    ], font=NOTE_FONT)
+    r += 1
+
+    # (d) functions --------------------------------------------------------------------------
+    r = _sk_banner(ws, r, "4. THE FUNCTIONS THE APP ACCEPTS")
+    r = _sk_lines(ws, r, [
+        "A function is a built-in calculation: its name, then round brackets, then the values it "
+        "works on, separated by commas.",
+        "These ten are the ones the app's checker understands. Anything else still works in "
+        "Excel, but the app then has to fall back on the value Excel saved.",
+    ])
+    r = _sk_table(ws, r, ["Function", "What it does", "Example in this workbook"],
+                  [[n, d, e] for n, d, e in SKILL_FUNCTIONS], wrap_last=True)
+    r = _sk_lines(ws, r, [
+        "A RANGE is two corners joined by a colon, and functions happily take one instead of a "
+        "list of separate cells:",
+        "   down a column:  =SUM(E2:E13)    across a row:  =SUM(L2:P2)    over a whole block:  "
+        "=SUM(L2:P13)",
+        "=SUM(E2:E13) totals the year's production; =SUM(L2:P2) adds January's five cost columns "
+        "(exactly what Q2 should be).",
+        "Ranges follow the fill handle too: copy =SUM(L2:P2) from Q2 down to Q13 and each row "
+        "sums its own five cells.",
+    ])
+    r += 1
+
+    # (e) errors -----------------------------------------------------------------------------
+    r = _sk_banner(ws, r, "5. WHEN A CELL SHOWS AN ERROR")
+    r = _sk_lines(ws, r, [
+        "An error is Excel telling you what it could not do. It is never random - each one has a "
+        "short list of likely causes.",
+        "Cells showing an error must be fixed before you upload: the app will not guess what you "
+        "meant.",
+    ])
+    r = _sk_table(ws, r, ["Shows", "What it means", "The usual fix"],
+                  [[c, m, f] for c, m, f in SKILL_ERRORS], wrap_last=True)
+    r += 1
+
+    # (f) named cells ------------------------------------------------------------------------
+    r = _sk_banner(ws, r, "6. NAMED CELLS: LABOR, RATE, HOLD and friends")
+    names = ", ".join(scn.named_constants())
+    r = _sk_lines(ws, r, [
+        "This workbook has already given a NAME to each given value on the locked 'Scenario' "
+        "sheet, so you never retype those numbers.",
+        f"The names are: {names}. Their values and meanings are listed on the 'Scenario' sheet.",
+        "=F2*LABOR is exactly the same calculation as pointing at the LABOR cell on the Scenario "
+        "sheet and freezing it with $ signs - it just reads like English.",
+        "A name NEVER drifts when you copy it down, so it behaves like an absolute reference. "
+        "Copy =F2*LABOR from L2 to L3 and you get =F3*LABOR.",
+        "Start typing LAB inside a formula and Excel offers you the name; press Tab to accept it. "
+        "A misspelt name gives #NAME?.",
+        "The app's checker knows the same names, so a formula written with them works unchanged "
+        "in Excel and in the in-app worksheet.",
+    ])
+    const = scn.named_constants()
+    r = _sk_table(ws, r, ["Instead of retyping", "Write", "Because"], [
+        [f"=F2*{const['LABOR']:g}", "=F2*LABOR",
+         "the monthly cost of one worker is given data: let the workbook supply it"],
+        [f"=E2/{const['RATE']:g}", "=E2/RATE",
+         "RATE is the bottles one worker can make in a month"],
+        [f"=J2*{const['HOLD']:g}", "=J2*HOLD",
+         "HOLD is the cost of holding one bottle for one month"],
+    ], wrap_last=True)
+    r = _sk_lines(ws, r, [
+        "Now go to the 'Chase Plan' sheet and start with column E. The 'Column Guide' sheet tells "
+        "you what belongs in every column.",
+    ], font=BOLD)
+
+    ws.freeze_panes = "A2"
+    _protect(ws)
+    return ws
+
+
+# -----------------------------------------------------------------------------------------
+# Conditional formatting, legend and chart on the plan sheets
+# -----------------------------------------------------------------------------------------
+def _plan_extras(ws, scn: Scenario, title: str):
+    """Colour rules + a worded legend + a demand/production line chart.
+
+    Everything lives in columns S..Z, which the importer never looks at (it reads A..Q only),
+    and conditional formatting adds no cell values, so protection and import are unaffected."""
+    first, last = worksheet.ROW_BASE, worksheet.ROW_BASE + 11          # rows 2..13
+    back = worksheet.col_letter("Backorders")                          # K
+    endinv = worksheet.col_letter("Ending Inventory")                  # J
+    total = worksheet.col_letter("Total Monthly Cost")                 # Q
+    maxinv = float(scn.params["max_inventory"])
+
+    ws.conditional_formatting.add(
+        f"{back}{first}:{back}{last}",
+        CellIsRule(operator="greaterThan", formula=["0"], fill=CF_RED_FILL, font=CF_RED_FONT))
+    ws.conditional_formatting.add(
+        f"{endinv}{first}:{endinv}{last}",
+        CellIsRule(operator="greaterThan", formula=[repr(maxinv)], fill=CF_AMBER_FILL,
+                   font=CF_AMBER_FONT))
+    ws.conditional_formatting.add(
+        f"{total}{first}:{total}{last}",
+        DataBarRule(start_type="min", end_type="max", color="BDD7EE", showValue=True))
+
+    _put(ws, "S1", "COLOUR KEY (a hint only - never the grade)", font=HEAD_FONT, fill=HEAD_FILL)
+    ws["T1"].fill = HEAD_FILL
+    legend = [
+        (f"Red fill in column {back} (Backorders)",
+         "a month with backorders above 0: orders you did not ship on time. They cost money every "
+         "month until you clear them."),
+        (f"Amber fill in column {endinv} (Ending Inventory)",
+         f"inventory above the storage limit of {maxinv:,.0f} bottles. Over the limit the plan "
+         f"fails the storage requirement."),
+        (f"Blue bar in column {total} (Total Monthly Cost)",
+         "the longer the bar, the more expensive the month. The bars are scaled to your own "
+         "twelve months, so they only compare rows inside this sheet."),
+    ]
+    for k, (what, why) in enumerate(legend, start=2):
+        _put(ws, f"S{k}", what, border=True, wrap=True)
+        _put(ws, f"T{k}", why, border=True, wrap=True)
+    _put(ws, "S5", "The colours appear by themselves as you type. They describe your numbers; the "
+                   "app still checks every cell when you upload.", wrap=True)
+    _put(ws, "S7", "The chart below fills in as you complete the Regular Production column "
+                   f"(E{first}:E{last}). It is empty until then, which is normal.", wrap=True)
+    ws.column_dimensions["S"].width = 42
+    ws.column_dimensions["T"].width = 62
+    for k in (2, 3, 4, 5, 7):
+        ws.row_dimensions[k].height = 32
+
+    chart = LineChart()
+    chart.title = f"{title}: forecast demand vs regular production"
+    chart.style = 2
+    chart.y_axis.title = "Bottles"
+    chart.x_axis.title = "Month"
+    chart.height, chart.width = 9.5, 20
+    for col in (worksheet.WS_COLS.index("Forecast Demand") + 1,
+                worksheet.WS_COLS.index("Regular Production") + 1):
+        chart.add_data(Reference(ws, min_col=col, min_row=1, max_row=last),
+                       titles_from_data=True)
+    chart.set_categories(Reference(ws, min_col=1, min_row=first, max_row=last))
+    ws.add_chart(chart, "S9")
+    return chart
 
 
 def _guide_sheet(wb: Workbook, scn: Scenario, whole: bool, hybrid: bool):
@@ -411,18 +790,23 @@ def _readme_sheet(wb: Workbook, scn: Scenario, whole: bool, hybrid: bool, studen
          "so you learn the same method.", None),
         ("", None),
         ("STEP BY STEP", BOLD),
-        ("1. Read the 'Scenario' sheet: it has your forecast and every cost/capacity value.", None),
-        ("2. Work in 'Chase Plan' and 'Level Plan'" + (" (and 'Hybrid Plan')" if hybrid else "")
+        ("1. New to Excel, or rusty? Start on the 'Excel Skills' sheet (the next tab). It covers "
+         "writing a formula, copying it down, relative vs absolute references ($), the functions "
+         "the app accepts, what the error values mean and how the named cells work - with a "
+         "two-minute self-checking exercise. That sheet is practice only: it is never imported "
+         "and never graded.", None),
+        ("2. Read the 'Scenario' sheet: it has your forecast and every cost/capacity value.", None),
+        ("3. Work in 'Chase Plan' and 'Level Plan'" + (" (and 'Hybrid Plan')" if hybrid else "")
          + ". Fill only the light-blue cells. Row 1 holds the headings and January is row 2, "
          "exactly as in the app, so a formula like =E2/RATE or =MAX(0,C2+E2-D2-B2) is identical "
          "in Excel and in the app.", None),
-        ("3. Use the NAMES LABOR, HIRE, LAYOFF, HIREHR, LAYOFFHR, HOLD, BACKORDER, OVERTIME, "
+        ("4. Use the NAMES LABOR, HIRE, LAYOFF, HIREHR, LAYOFFHR, HOLD, BACKORDER, OVERTIME, "
          "SUBCONTRACT, RATE, BEGIN, SAFETY, MAXINV, SHIFT, START in formulas (listed on the "
          "Scenario sheet). The 'Column Guide' sheet shows units and how each column is calculated.",
          None),
-        ("4. Save the file as .xlsx (Excel Workbook). Do NOT rename sheets, columns or move "
+        ("5. Save the file as .xlsx (Excel Workbook). Do NOT rename sheets, columns or move "
          "rows, and keep the '_meta' sheet.", None),
-        ("5. Upload the saved file in the app (Excel import). The app lists what it found and "
+        ("6. Upload the saved file in the app (Excel import). The app lists what it found and "
          "marks each cell correct or not.", None),
         ("", None),
         ("UNITS AND ASSUMPTIONS", BOLD),
@@ -496,9 +880,11 @@ def build_template(scn: Scenario, *, whole: bool = True, hybrid: bool = True,
     sheet_names = [PLAN_SHEETS["chase"], PLAN_SHEETS["level"]] + (
         [PLAN_SHEETS["hybrid"]] if hybrid else [])
     _readme_sheet(wb, scn, whole, hybrid, student_label, sheet_names)
+    _skills_sheet(wb, scn)                       # position 2: right after 'Read Me'
     _build_scenario_sheet(wb, scn)
-    _plan_sheet(wb, PLAN_SHEETS["chase"], scn, whole)
-    _plan_sheet(wb, PLAN_SHEETS["level"], scn, whole)
+    for kind in ("chase", "level"):
+        ws = _plan_sheet(wb, PLAN_SHEETS[kind], scn, whole)
+        _plan_extras(ws, scn, PLAN_SHEETS[kind])
     if hybrid:
         _hybrid_sheet(wb, scn, whole)
     _guide_sheet(wb, scn, whole, hybrid)
@@ -1090,8 +1476,8 @@ def export_workbook(scn: Scenario, plans: Dict[str, dict], *, whole: bool = True
         _put(wp, f"A{tr}", "Σ Total", font=BOLD, fill=TOTAL_FILL)
         for name in _SUM_EXPORT:
             L = get_column_letter(engine.PLAN_COLUMNS.index(name) + 1)
-            _put(wp, f"{L}{tr}", f"=SUM({L}2:{L}{n + 1})", font=BOLD, fill=TOTAL_FILL,
-                 fmt=_col_fmt(name))
+            _formula(wp, f"{L}{tr}", f"=SUM({L}2:{L}{n + 1})", font=BOLD, fill=TOTAL_FILL,
+                     fmt=_col_fmt(name))
         _put(wp, f"A{tr + 2}", "Units", font=BOLD)
         for j, name in enumerate(engine.PLAN_COLUMNS):
             u = "$" if name.endswith("Cost") else _EXPORT_UNITS.get(name, "")

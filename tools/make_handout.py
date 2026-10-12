@@ -71,7 +71,8 @@ def build(path):
     ws = [
         "Type a number or a formula starting with <b>=</b>, e.g. <b>=E2/RATE</b> or <b>=MAX(0,C2+E2-D2-B2)</b>.",
         "<b>Row 1 holds the headings; January is row 2</b>; column A = Month, B = Forecast Demand — exactly as in the Excel template.",
-        "Functions: MAX, MIN, SUM, ROUNDUP, ROUNDDOWN, ROUND, ABS. Powers use ^ . Names: LABOR, HIRE, HOLD, RATE, BEGIN, SAFETY …",
+        "Functions: SUM, MAX, MIN, AVERAGE, COUNT, ROUND, ROUNDUP, ROUNDDOWN, ABS, IF. Comparisons "
+        "= &lt; &gt; &lt;= &gt;= &lt;&gt; work inside IF. Powers use ^ . Names: LABOR, HIRE, HOLD, RATE, BEGIN, SAFETY …",
         "Status always has a symbol: ✔ correct · ✖ needs attention · ○ blank · ⚠ formula error (hover for the reason).",
         "Prefer Excel? Download the workbook for <i>your</i> scenario, fill it in, upload it; it is checked the same way.",
         "Enter the plan's total annual cost (sum of Total Monthly Cost) to finish each plan.",

@@ -140,6 +140,37 @@ streamlit run app.py
 
 Development / tests: `pip install -r requirements-dev.txt && python -m pytest tests -q`.
 
+## Learning basic Excel functions
+
+This version teaches **basic Excel functions** (no Solver). The checker accepts what a
+beginner actually types:
+
+* `SUM MAX MIN AVERAGE COUNT ROUND ROUNDUP ROUNDDOWN ABS IF`, the comparisons
+  `= < > <= >= <>`, `+ - * / ^`, parentheses and `%`.
+* Ranges in all three Excel shapes: down a column (`E2:E13`), across a row (`SUM(L2:P2)`)
+  and over a block (`L2:P4`).
+* `IF` evaluates only the branch it takes, so `IF(B2=0,0,100/B2)` is safe.
+  `AVERAGE` and `COUNT` ignore blank cells, as Excel does; `SUM` treats them as 0.
+* `IF(C2+E2-B2>0, C2+E2-B2, 0)` and `MAX(0, C2+E2-B2)` both work and both pass — the
+  contrast between them is a teaching point, not a trap.
+
+The workbook opens with an **Excel Skills** sheet — never imported, never graded — covering
+how a formula works, fill/copy-down, relative vs. absolute references, the function list,
+named cells, and what `#DIV/0!`, `#REF!`, `#NAME?`, `#VALUE!` and `####` mean. Its centrepiece
+is a self-checking `$` exercise: multiply a column of quantities by one rate cell and copy it
+down. The rate sits in a column with nothing beneath it, so a missing `$` slides the reference
+onto empty cells, every row after the first returns 0, and the Check column says so — the
+lesson is visible rather than described.
+
+The plan sheets carry conditional formatting (shortage months in red, inventory over the
+storage cap in amber, a cost data bar) with a **worded** legend placed right of the grid where
+the importer never looks, plus a demand-vs-production line chart that fills in as the student
+completes the production column.
+
+Each plan stage shows **how you are building this worksheet** — how many cells hold a
+formula, which named values you used — and encourages formulas without requiring them.
+Set `min_formula_share_pct` above 0 to make a minimum share a condition of completing a plan.
+
 ## What the report records about *how* the work was built
 
 Checking compares calculated values, so a plan entered as 180 typed numbers passes exactly
@@ -222,12 +253,13 @@ the Juicetification Director form, or by URL: `?cfg=<base64 json>`, `?game=<code
 | `shelf_life_months`, `disposal_cost` | 0, 0.50 | perishability test |
 | `forecast_error_pct` | 0 | enables the forecast-error exercise |
 | `assignment_name`, `report_timezone` | …, server time | shown on the PDF (`America/Phoenix`, …) |
+| `min_formula_share_pct` | 0 | minimum % of worksheet cells that must use a formula (0 = encourage only, never block) |
 | `autosave_seconds` | 5 | debounce window; rapid edits coalesce into one upload |
 | `autosave_flush_seconds` | 20 | background flush of pending saves (0 = off) |
 
 Settings that affect only presentation or server behaviour — `feedback_mode`,
 `benchmark_reveal`, `allow_replacement`, `assignment_name`, `report_timezone`,
-`autosave_seconds`, `autosave_flush_seconds` — are excluded from the scenario hash, so you can
+`autosave_seconds`, `autosave_flush_seconds`, `min_formula_share_pct` — are excluded from the scenario hash, so you can
 retune them **mid-course** without un-verifying completed plans or rejecting saved progress.
 Changing anything that alters a correct answer (costs, capacity, policies, demand) still does
 invalidate saved work, by design.
@@ -287,7 +319,8 @@ tests/                 pytest suite
 
 Calculation functions take the scenario explicitly — no global `FORECAST` is swapped any more.
 The formula evaluator supports `+ - * / ^`, parentheses, cell references, brief-data names and
-`MAX MIN SUM ROUNDUP ROUNDDOWN ROUND ABS`, and reports missing references, circular references,
+`MAX MIN SUM AVERAGE COUNT ROUNDUP ROUNDDOWN ROUND ABS IF`, comparisons (`=` `<` `>` `<=`
+`>=` `<>`), and reports missing references, circular references,
 unsupported syntax and division by zero by cell, with limits on length, nesting and work.
 Ranges work in all three Excel shapes — down a column (`E2:E13`), across a row (`SUM(L2:P2)`,
 the usual way to total a row of costs) and over a block (`L2:P4`).

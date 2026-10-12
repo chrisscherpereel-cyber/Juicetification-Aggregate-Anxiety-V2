@@ -277,12 +277,13 @@ def test_hybrid_text_rejected():
 def test_unsupported_formula_without_cache_warns_and_keeps_formula():
     def mut(wb):
         _fill(wb, "Chase Plan", _truth("chase"))
-        wb["Chase Plan"]["K5"] = "=IF(1,2,3)"            # openpyxl writes no cached value
+        # openpyxl writes no cached value, and the checker has no SUMPRODUCT
+        wb["Chase Plan"]["K5"] = "=SUMPRODUCT(B2:B3,E2:E3)"
     res = import_workbook(_roundtrip(mut), S, kinds=("chase",))
     assert res.ok
     w = [m for m in _msgs(res, "warning") if m.cell == "K5"]
-    assert w and "IF" in w[0].text and "MAX/MIN" in w[0].text
-    assert res.sheets["chase"].at[5, "Backorders"] == "=IF(1,2,3)"
+    assert w and "SUMPRODUCT" in w[0].text
+    assert res.sheets["chase"].at[5, "Backorders"] == "=SUMPRODUCT(B2:B3,E2:E3)"
 
 
 def _xlsxwriter_book(cell_formula, cached):
@@ -310,7 +311,7 @@ def _xlsxwriter_book(cell_formula, cached):
 
 
 def test_unsupported_formula_with_cached_value_falls_back():
-    data = _xlsxwriter_book(("F2", "=IF(E2>0,ROUNDUP(E2/RATE,0),0)"), 10)
+    data = _xlsxwriter_book(("F2", "=SUMPRODUCT(B2:B3,E2:E3)"), 10)
     res = import_workbook(data, S, kinds=("chase",))
     assert res.ok, [str(m) for m in res.errors]
     assert res.sheets["chase"].at[2, "Workers"] == "10"
